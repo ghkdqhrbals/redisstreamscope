@@ -1,30 +1,34 @@
-# StreamScope
+# StreamScope – A UI for Redis Streams
 
-StreamScope is a lightweight, self-hosted UI for Redis Streams. Browse streams and messages, follow live traffic, inspect consumer groups and pending entries, manage Redis connections, and control user access from one clean interface.
+StreamScope is a lightweight, self-hosted web application for managing and debugging Redis Streams. It gives you one clean interface for exploring messages, monitoring consumer groups, managing Redis connections, and controlling access.
 
 [Documentation](https://ghkdqhrbals.github.io/streamscope/) · [Container image](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
 
 ## Preview
 
-### Overview
+[![StreamScope preview](./design/streamscope-overview.png)](./design/preview.mp4)
 
-![StreamScope Overview](./design/streamscope-overview.png)
+[Watch preview.mp4](./design/preview.mp4)
 
-### Streams
+## Features
 
-![StreamScope Streams](./design/streamscope-streams.png)
+- **Stream explorer:** Browse streams, inspect messages and payloads, search and sort entries, follow live traffic, add messages, and configure `MAXLEN`.
+- **Consumer groups:** Inspect groups and consumers, lag, pending entries, idle and inactive time, delivery state, and assigned messages.
+- **Redis connections:** Add, test, reconfigure, and remove standalone, Sentinel, and Cluster connections with password, ACL, TLS, or mTLS support.
+- **Access control:** Manage users, roles, detailed permissions, and audit logs from the application.
+- **Operations overview:** See stream and entry counts, consumer groups, total lag, pending messages, last consumption activity, and connection health.
+- **Bilingual interface:** Use StreamScope in English or Korean.
 
-### Consumer groups
+## Getting started
 
-![StreamScope Consumer Groups](./design/streamscope-consumer-groups.png)
+### Prerequisites
 
-### Redis connections
+- Docker
+- Redis Open Source 6.2 or newer
 
-![StreamScope Redis Connections](./design/streamscope-connections.png)
+### Quick start
 
-## Quick start
-
-One command is all you need:
+Run StreamScope:
 
 ```sh
 docker run -d \
@@ -34,41 +38,16 @@ docker run -d \
   ghcr.io/ghkdqhrbals/streamscope:latest
 ```
 
-Then:
+Open [http://localhost:8080](http://localhost:8080) and sign in with:
 
-1. Open [http://localhost:8080](http://localhost:8080).
-2. Sign in with `admin` / `password`.
-3. Open **Settings → Redis connections** and add your Redis server.
-4. Click **Test connection**, then **Save configuration**.
-
-That is it. You do not need to prepare a config file or pass Redis settings to Docker. StreamScope saves everything you configure in the browser to the `streamscope-data` volume.
-
-> Running Redis directly on your macOS or Windows machine? Use `host.docker.internal:6379` instead of `localhost:6379`.
-
-### Use a different host port
-
-Keep the container port at `8080` and change only the number on the left:
-
-```sh
-docker run -d \
-  --name streamscope \
-  -p 9090:8080 \
-  -v streamscope-data:/data \
-  ghcr.io/ghkdqhrbals/streamscope:latest
+```text
+Username: admin
+Password: password
 ```
 
-Now open [http://localhost:9090](http://localhost:9090).
+Go to **Settings → Redis connections**, add your Redis server, test the connection, and save it. No Redis configuration needs to be passed to Docker.
 
-## What you can connect
-
-Redis connections are managed inside StreamScope. You can add, test, reconfigure, and remove:
-
-- Standalone Redis
-- Redis Sentinel
-- Redis Cluster
-- Redis with or without a password
-- Redis ACL users
-- TLS and mTLS connections
+If Redis runs directly on your macOS or Windows host, connect to `host.docker.internal:6379`.
 
 ## Redis compatibility
 
@@ -77,23 +56,6 @@ Every pull request runs the Redis Streams integration suite against the latest p
 | Redis version | Support |
 | --- | --- |
 | `6.2` | Core Streams, groups, pending entries, `XCLAIM`, and `XAUTOCLAIM` |
-| `7.0` | Adds consumer-group lag and entries-read metrics |
-| `7.2`, `7.4` | Adds separate consumer inactive-time reporting |
+| `7.0` | Consumer-group lag and entries-read metrics |
+| `7.2`, `7.4` | Separate consumer inactive-time reporting |
 | `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | All current StreamScope features and metrics |
-
-Redis 6.2 is the minimum supported version.
-
-## Build locally
-
-```sh
-docker build -t streamscope:local .
-docker run -d \
-  --name streamscope \
-  -p 8080:8080 \
-  -v streamscope-data:/data \
-  streamscope:local
-```
-
-## Releases
-
-Run the [Release container image](https://github.com/ghkdqhrbals/streamscope/actions/workflows/release.yml) workflow on `main` and choose `patch`, `minor`, or `major`. The workflow updates the version, runs the test matrix, publishes `linux/amd64` and `linux/arm64` images to GHCR, and creates the matching GitHub Release.
