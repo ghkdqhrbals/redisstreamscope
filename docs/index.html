@@ -31,6 +31,7 @@
         <a class="wordmark" href="#top" aria-label="StreamScope home">StreamScope</a>
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#features" data-en="Features" data-ko="기능">Features</a>
+          <a href="#compatibility" data-en="Compatibility" data-ko="호환성">Compatibility</a>
           <a href="#quick-start" data-en="Quick start" data-ko="빠른 시작">Quick start</a>
           <a href="#configuration" data-en="Configuration" data-ko="설정">Configuration</a>
         </nav>
@@ -156,6 +157,73 @@
             </p>
           </article>
         </div>
+      </section>
+
+      <section class="section" id="compatibility">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Redis compatibility" data-ko="Redis 호환성">Redis compatibility</p>
+          <h2 data-en="Tested from Redis 6.2 through 8.8." data-ko="Redis 6.2부터 8.8까지 테스트합니다.">
+            Tested from Redis 6.2 through 8.8.
+          </h2>
+        </div>
+        <div class="compatibility-table" role="table" aria-label="Supported Redis versions">
+          <div class="compatibility-row compatibility-header" role="row">
+            <span role="columnheader" data-en="Version" data-ko="버전">Version</span>
+            <span role="columnheader" data-en="Status" data-ko="상태">Status</span>
+            <span role="columnheader" data-en="Details" data-ko="세부 사항">Details</span>
+          </div>
+          <div class="compatibility-row" role="row">
+            <code role="cell">6.2</code>
+            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
+            <span
+              role="cell"
+              data-en="Core Streams features, groups, pending entries, XCLAIM, and XAUTOCLAIM. Group lag and separate inactive time are not exposed by Redis."
+              data-ko="Streams 핵심 기능, 그룹, Pending 엔트리, XCLAIM, XAUTOCLAIM을 지원합니다. Redis가 그룹 지연과 별도 비활성 시간을 제공하지 않습니다."
+            >
+              Core Streams features, groups, pending entries, XCLAIM, and XAUTOCLAIM. Group lag and separate inactive time are not exposed by Redis.
+            </span>
+          </div>
+          <div class="compatibility-row" role="row">
+            <code role="cell">7.0</code>
+            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
+            <span
+              role="cell"
+              data-en="Adds consumer-group lag and entries-read metrics."
+              data-ko="컨슈머 그룹 지연과 entries-read 지표가 추가됩니다."
+            >
+              Adds consumer-group lag and entries-read metrics.
+            </span>
+          </div>
+          <div class="compatibility-row" role="row">
+            <code role="cell">7.2 · 7.4</code>
+            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
+            <span
+              role="cell"
+              data-en="Adds separate consumer inactive-time reporting. All current metrics are available."
+              data-ko="컨슈머 비활성 시간이 별도로 제공됩니다. 현재 모든 지표를 사용할 수 있습니다."
+            >
+              Adds separate consumer inactive-time reporting. All current metrics are available.
+            </span>
+          </div>
+          <div class="compatibility-row" role="row">
+            <code role="cell">8.0 · 8.2 · 8.4 · 8.6 · 8.8</code>
+            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
+            <span
+              role="cell"
+              data-en="All current StreamScope features and metrics are available."
+              data-ko="현재 StreamScope의 모든 기능과 지표를 사용할 수 있습니다."
+            >
+              All current StreamScope features and metrics are available.
+            </span>
+          </div>
+        </div>
+        <p
+          class="compatibility-note"
+          data-en="Each pull request tests the latest patch release in every listed version line. A new Redis version is supported only after it passes this matrix."
+          data-ko="모든 PR에서 각 버전 계열의 최신 패치 릴리스를 테스트합니다. 새로운 Redis 버전은 이 매트릭스를 통과한 후 지원 대상에 포함됩니다."
+        >
+          Each pull request tests the latest patch release in every listed version line. A new Redis version is supported only after it passes this matrix.
+        </p>
       </section>
 
       <section class="section preview-section">

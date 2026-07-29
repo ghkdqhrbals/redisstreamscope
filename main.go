@@ -18,6 +18,8 @@ import (
 //go:embed all:dist/web
 var webAssets embed.FS
 
+var buildVersion = "dev"
+
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
 		port, err := serverPort()

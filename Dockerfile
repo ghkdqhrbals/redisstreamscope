@@ -7,13 +7,14 @@ COPY web ./web
 RUN npm run build:web
 
 FROM golang:1.25-alpine AS go-builder
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY config.properties ./
 COPY --from=web-builder /src/dist ./dist
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/streamscope . \
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/streamscope . \
     && mkdir -p /out/data \
     && cp config.properties /out/data/config.properties \
     && chmod 600 /out/data/config.properties \

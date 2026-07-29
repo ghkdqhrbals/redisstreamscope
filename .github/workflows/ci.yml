@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web application
+        run: npm run build:web
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: dist/web
+          retention-days: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests
+        run: go test -count=1 ./...
+
+  redis-compatibility:
+    name: Redis ${{ matrix.redis }}
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        redis:
+          - "6.2"
+          - "7.0"
+          - "7.2"
+          - "7.4"
+          - "8.0"
+          - "8.2"
+          - "8.4"
+          - "8.6"
+          - "8.8"
+    services:
+      redis:
+        image: redis:${{ matrix.redis }}-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download web build
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: dist/web
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Redis Streams compatibility suite
+        id: compatibility
+        env:
+          REDIS_TEST_ADDR: 127.0.0.1:6379
+          REDIS_TEST_VERSION: ${{ matrix.redis }}
+          REDIS_TEST_VERSION_FILE: redis-actual-version.txt
+        run: go test -v -count=1 -run '^TestRedisVersionCompatibility$' .
+
+      - name: Record compatibility result
+        if: always()
+        env:
+          REDIS_SERIES: ${{ matrix.redis }}
+          TEST_OUTCOME: ${{ steps.compatibility.outcome }}
+        run: |
+          result=FAIL
+          if [[ "$TEST_OUTCOME" == "success" ]]; then
+            result=PASS
+          fi
+
+          actual_version="$REDIS_SERIES series"
+          if [[ -s redis-actual-version.txt ]]; then
+            actual_version=$(< redis-actual-version.txt)
+          fi
+
+          mkdir -p redis-results
+          printf '%s\n%s\n' "$actual_version" "$result" > "redis-results/$REDIS_SERIES.txt"
+
+      - name: Upload compatibility result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: redis-result-${{ matrix.redis }}
+          path: redis-results/${{ matrix.redis }}.txt
+          retention-days: 1
+
+  container-build:
+    name: Docker image build
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: streamscope:pr-${{ github.event.pull_request.number || github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  redis-compatibility-comment:
+    name: Redis compatibility PR comment
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - quality
+      - redis-compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download compatibility results
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: redis-result-*
+          path: redis-results
+          merge-multiple: true
+
+      - name: Post compatibility result table
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REDIS_RESULTS_DIR: redis-results
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/post-redis-compatibility-comment.mjs

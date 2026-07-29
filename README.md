@@ -27,6 +27,19 @@ Open [http://localhost:8080](http://localhost:8080) and sign in with:
 
 Add your Redis connection from **Settings**. When Redis runs directly on a macOS or Windows Docker host, use `host.docker.internal:6379` instead of `localhost:6379`.
 
+## Redis compatibility
+
+StreamScope supports the following Redis Open Source version lines, from **6.2 through 8.8**. Every pull request runs the Redis Streams integration suite against the latest patch release in each line:
+
+| Redis version | Status | StreamScope behavior |
+| --- | --- | --- |
+| `6.2` | Supported and CI-tested | Stream operations, live tail, consumer groups, pending entries, `XCLAIM`, and `XAUTOCLAIM`. Redis does not expose group lag/entries-read or separate consumer inactive time. |
+| `7.0` | Supported and CI-tested | Adds server-provided consumer-group lag and entries-read metrics. |
+| `7.2`, `7.4` | Supported and CI-tested | Adds separate consumer inactive-time reporting; all current StreamScope metrics are available. |
+| `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | Supported and CI-tested | All current StreamScope features and metrics are available. |
+
+Redis 6.2 is the minimum because StreamScope supports `XAUTOCLAIM`. New Redis version lines are not considered supported until they are added to the compatibility matrix and pass the same integration suite.
+
 ## Docker run
 
 ```sh
@@ -94,3 +107,22 @@ Use only one of `REDIS_HOST`, `REDIS_NODES`, or `REDIS_URL`. See the commented [
 ```sh
 docker build -t streamscope:local .
 ```
+
+## Container releases
+
+Container releases are created from the [Release container image](https://github.com/ghkdqhrbals/streamscope/actions/workflows/release.yml) workflow:
+
+1. Select **Run workflow** on the `main` branch.
+2. Choose `patch`, `minor`, or `major`.
+3. Start the workflow.
+
+The workflow calculates the next semantic version and updates `VERSION`, `package.json`, and `package-lock.json`. After the tests pass, it builds `linux/amd64` and `linux/arm64` images, publishes them to GHCR, pushes the `Release vX.Y.Z` version commit and Git tag, and creates the matching GitHub Release. The released version is also embedded in the container and returned by `GET /health/live`.
+
+For a `1.4.2` release, these image tags are published:
+
+| Tag | Update policy |
+| --- | --- |
+| `1.4.2` | Immutable patch release |
+| `1.4` | Latest patch in the minor version |
+| `1` | Latest release in the major version |
+| `latest` | Latest StreamScope release |

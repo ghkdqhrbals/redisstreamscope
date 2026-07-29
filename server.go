@@ -170,7 +170,10 @@ func (s *apiServer) protect(action string, next http.HandlerFunc) http.Handler {
 }
 
 func (s *apiServer) healthLive(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "uptimeSeconds": int(time.Since(s.started).Seconds())})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"status": "ok", "version": buildVersion,
+		"uptimeSeconds": int(time.Since(s.started).Seconds()),
+	})
 }
 
 func (s *apiServer) healthReady(writer http.ResponseWriter, request *http.Request) {

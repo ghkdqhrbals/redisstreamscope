@@ -20,6 +20,24 @@ func (writer *deadlineRecorder) SetWriteDeadline(deadline time.Time) error {
 	return nil
 }
 
+func TestHealthLiveIncludesBuildVersion(t *testing.T) {
+	previousVersion := buildVersion
+	buildVersion = "1.4.2"
+	t.Cleanup(func() {
+		buildVersion = previousVersion
+	})
+
+	response := httptest.NewRecorder()
+	(&apiServer{started: time.Now()}).healthLive(response, httptest.NewRequest(http.MethodGet, "/health/live", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"version":"1.4.2"`) {
+		t.Fatalf("health response does not contain the build version: %s", response.Body.String())
+	}
+}
+
 func TestConnectionInputAcceptsPasswordConfiguredState(t *testing.T) {
 	request := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{
 		"id":"redis",
