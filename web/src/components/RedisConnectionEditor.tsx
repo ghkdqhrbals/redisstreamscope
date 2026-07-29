@@ -26,9 +26,10 @@ type Props = {
   onChange: (value: RedisConnectionConfig) => void;
   onRemove?: () => void;
   compact?: boolean;
+  idReadOnly?: boolean;
 };
 
-export function RedisConnectionEditor({ value, onChange, onRemove, compact = false }: Props) {
+export function RedisConnectionEditor({ value, onChange, onRemove, compact = false, idReadOnly = false }: Props) {
   const { t } = useI18n();
   const update = <K extends keyof RedisConnectionConfig>(key: K, next: RedisConnectionConfig[K]) => onChange({ ...value, [key]: next });
   return (
@@ -40,7 +41,7 @@ export function RedisConnectionEditor({ value, onChange, onRemove, compact = fal
       </header>
 
       <div className="editor-grid">
-        <label>{t("Connection ID")}<input value={value.id} onChange={(event) => update("id", event.target.value)} placeholder="production" required /></label>
+        <label>{t("Connection ID")}<input value={value.id} onChange={(event) => update("id", event.target.value)} placeholder="production" required readOnly={idReadOnly} /></label>
         <label>{t("Display name")}<input value={value.name} onChange={(event) => update("name", event.target.value)} placeholder="Production Redis" required /></label>
         <label>{t("Mode")}<select value={value.mode} onChange={(event) => {
           const mode = event.target.value as RedisConnectionConfig["mode"];

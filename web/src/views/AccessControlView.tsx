@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api";
+import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
 import type { ToastState } from "../types";
 
@@ -77,6 +78,14 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
 
   const allowedRequests = logs.filter((log) => Number(log.status) < 400).length;
   const allowedPercent = logs.length ? ((allowedRequests / logs.length) * 100).toFixed(1) : "0.0";
+  const userColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "user", label: t("User"), defaultWidth: 230, minWidth: 170, grow: true },
+    { id: "role", label: t("Role"), defaultWidth: 125, minWidth: 105 },
+    { id: "access", label: t("Resource access"), defaultWidth: 220, minWidth: 155 },
+    { id: "last-login", label: t("Last login"), defaultWidth: 145, minWidth: 115 },
+    { id: "status", label: t("Status"), defaultWidth: 110, minWidth: 90 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 40, minWidth: 32 },
+  ], [t]);
 
   return (
     <div className="access-page">
@@ -99,8 +108,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
       {tab === "users" ? (
         <section className="access-surface">
           <div className="access-toolbar"><label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users…")} /></label><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">{t("All roles")}</option><option value="admin">{t("Admin")}</option><option value="operator">{t("Operator")}</option><option value="viewer">{t("Viewer")}</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">{t("All status")}</option><option value="active">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></div>
-          <div className="users-table">
-            <div className="users-head"><span>{t("User")}</span><span>{t("Role")}</span><span>{t("Resource access")}</span><span>{t("Last login")}</span><span>{t("Status")}</span><span /></div>
+          <ResizableGrid className="users-table" storageKey="access-users" columns={userColumns} headerClassName="users-head">
             {filteredUsers.map((user) => (
               <div className="user-row" key={user.id}>
                 <span className="user-identity"><i>{user.displayName.slice(0, 2).toUpperCase()}</i><span><strong>{user.displayName}</strong><em>{user.username}</em></span></span>
@@ -112,7 +120,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
               </div>
             ))}
             {!filteredUsers.length ? <div className="grant-empty">{t("No users match the filters.")}</div> : null}
-          </div>
+          </ResizableGrid>
         </section>
       ) : null}
 
@@ -179,6 +187,13 @@ function RolesPanel({ users, grants, onGrantsChange, onToast }: { users: AccessU
     { id: "operator", name: "Operator", icon: UserCheck, userCount: users.filter((user) => user.role === "operator").length, description: "Stream operations and consumer group management", permissions: ["Read streams", "Write messages", "Manage groups"] },
     { id: "viewer", name: "Viewer", icon: LockKeyhole, userCount: users.filter((user) => user.role === "viewer").length, description: "Read-only access to permitted Redis resources", permissions: ["Read streams", "Read groups", "No mutations"] },
   ];
+  const grantColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "principal", label: t("Principal"), defaultWidth: 180, minWidth: 130 },
+    { id: "action", label: t("Action"), defaultWidth: 170, minWidth: 120 },
+    { id: "scope", label: t("Scope"), defaultWidth: 300, minWidth: 180, grow: true },
+    { id: "effect", label: t("Effect"), defaultWidth: 105, minWidth: 85 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 62, minWidth: 50 },
+  ], [t]);
   return (
     <section className="roles-grid">
       {roles.map(({ id, name, icon: Icon, userCount, description, permissions }) => (
@@ -190,11 +205,12 @@ function RolesPanel({ users, grants, onGrantsChange, onToast }: { users: AccessU
       ))}
       <section className="grant-matrix">
         <header><h2>{t("Resource overrides")}</h2><button onClick={() => setShowGrant(true)}><Plus size={13} />{t("Add permission")}</button></header>
-        <div className="grant-head"><span>{t("Principal")}</span><span>{t("Action")}</span><span>{t("Scope")}</span><span>{t("Effect")}</span><span /></div>
-        {grants.length ? grants.map((grant) => {
-          const user = users.find((item) => item.id === grant.userId);
-          return <div className="grant-row" key={grant.id}><span>{user?.username ?? grant.userId}</span><span className="mono">{grant.action}</span><span className="mono">{grant.scope}</span><span className={grant.effect}>{grant.effect === "allow" ? t("Allow") : t("Deny")}</span><span className="grant-actions"><button aria-label={t("Edit permission")} onClick={() => setEditingGrant(grant)}><Pencil size={13} /></button><button aria-label={t("Delete permission")} onClick={() => void deleteGrant(grant)}><X size={14} /></button></span></div>;
-        }) : <div className="grant-empty">{t("There are no per-user permission overrides yet.")}</div>}
+        <ResizableGrid className="grant-table" storageKey="access-grants" columns={grantColumns} headerClassName="grant-head">
+          {grants.length ? grants.map((grant) => {
+            const user = users.find((item) => item.id === grant.userId);
+            return <div className="grant-row" key={grant.id}><span>{user?.username ?? grant.userId}</span><span className="mono">{grant.action}</span><span className="mono">{grant.scope}</span><span className={grant.effect}>{grant.effect === "allow" ? t("Allow") : t("Deny")}</span><span className="grant-actions"><button aria-label={t("Edit permission")} onClick={() => setEditingGrant(grant)}><Pencil size={13} /></button><button aria-label={t("Delete permission")} onClick={() => void deleteGrant(grant)}><X size={14} /></button></span></div>;
+          }) : <div className="grant-empty">{t("There are no per-user permission overrides yet.")}</div>}
+        </ResizableGrid>
       </section>
       {showGrant ? <GrantModal users={users} onClose={() => setShowGrant(false)} onSaved={(grant) => { onGrantsChange([...grants.filter((item) => !(item.userId === grant.userId && item.action === grant.action && item.scope === grant.scope)), grant]); setShowGrant(false); onToast({ kind: "success", title: t("Permission saved"), message: t("Saved permission {action} / {scope}.", { action: grant.action, scope: grant.scope }) }); }} /> : null}
       {editingGrant ? <GrantModal users={users} initial={editingGrant} onClose={() => setEditingGrant(null)} onSaved={(grant) => { onGrantsChange([...grants.filter((item) => item.id !== editingGrant.id && !(item.userId === grant.userId && item.action === grant.action && item.scope === grant.scope)), grant]); setEditingGrant(null); onToast({ kind: "success", title: t("Permission updated"), message: t("Updated permission {action} / {scope}.", { action: grant.action, scope: grant.scope }) }); }} /> : null}
@@ -248,18 +264,25 @@ function LogsPanel({ logs, onRefresh }: { logs: Array<Record<string, string | nu
     const allowed = Number(log.status) < 400;
     return matchesText && (result === "all" || (result === "allowed" ? allowed : !allowed));
   });
+  const logColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "time", label: t("Time"), defaultWidth: 170, minWidth: 130 },
+    { id: "user", label: t("User"), defaultWidth: 130, minWidth: 100 },
+    { id: "action", label: t("Action"), defaultWidth: 165, minWidth: 115 },
+    { id: "scope", label: t("Scope"), defaultWidth: 300, minWidth: 180, grow: true },
+    { id: "result", label: t("Result"), defaultWidth: 135, minWidth: 105 },
+    { id: "ip", label: t("Source IP"), defaultWidth: 145, minWidth: 115 },
+  ], [t]);
   return (
     <section className="access-surface">
       <div className="access-toolbar"><button onClick={onRefresh}><RefreshCw size={13} />{t("Refresh")}</button><label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("User, action, scope, IP…")} /></label><select value={result} onChange={(event) => setResult(event.target.value)}><option value="all">{t("All results")}</option><option value="allowed">{t("Allowed")}</option><option value="denied">{t("Denied")}</option></select><button onClick={() => exportAuditLogs(filtered)}><Download size={13} />{t("Export CSV")}</button></div>
-      <div className="logs-table">
-        <div className="logs-head"><span>{t("Time")}</span><span>{t("User")}</span><span>{t("Action")}</span><span>{t("Scope")}</span><span>{t("Result")}</span><span>{t("Source IP")}</span></div>
+      <ResizableGrid className="logs-table" storageKey="access-logs" columns={logColumns} headerClassName="logs-head">
         {filtered.map((log, index) => (
           <div className="log-row" key={`${log.requestId ?? index}-${index}`}>
             <span className="mono">{formatTime(String(log.createdAt), locale)}</span><strong>{String(log.username)}</strong><span className="mono">{String(log.action)}</span><span className="mono log-scope">{String(log.scope)}</span><span className={Number(log.status) < 400 ? "log-result allowed" : "log-result denied"}>{Number(log.status) < 400 ? t("Allowed") : t("Denied")} · {log.status}</span><span className="mono">{String(log.ip)}</span>
           </div>
         ))}
         {!filtered.length ? <div className="grant-empty">{t("No audit logs match the filters.")}</div> : null}
-      </div>
+      </ResizableGrid>
     </section>
   );
 }

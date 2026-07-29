@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, ChevronRight, CircleUserRound, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
+import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
 import type { ConsumerGroup, ConsumerInfo, PendingEntry, RedisConnection, StreamItem, ToastState } from "../types";
 
@@ -141,6 +142,32 @@ export function GroupsView({ initialConnectionId = "", initialStreamKey = "", on
   const group = groups.find((item) => item.name === groupName);
   const connection = connections.find((item) => item.id === connectionId);
   const hasInspector = detailTab === "consumers" ? Boolean(selectedConsumer) : Boolean(selected);
+  const groupColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "name", label: t("Name"), defaultWidth: 240, minWidth: 150, grow: true },
+    { id: "consumers", label: t("Consumers"), defaultWidth: 105, minWidth: 85 },
+    { id: "pending", label: t("Pending"), defaultWidth: 100, minWidth: 75 },
+    { id: "lag", label: t("Lag"), defaultWidth: 90, minWidth: 70 },
+    { id: "last-delivered", label: t("Last delivered ID"), defaultWidth: 220, minWidth: 150 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 32, minWidth: 28 },
+  ], [t]);
+  const consumerColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "consumer", label: t("Consumer"), defaultWidth: 180, minWidth: 130 },
+    { id: "status", label: t("Status"), defaultWidth: 100, minWidth: 80 },
+    { id: "pending", label: t("Pending"), defaultWidth: 85, minWidth: 70 },
+    { id: "idle", label: t("Idle"), defaultWidth: 100, minWidth: 80 },
+    { id: "inactive", label: t("Inactive"), defaultWidth: 100, minWidth: 80 },
+    { id: "assigned", label: t("Assigned messages"), defaultWidth: 300, minWidth: 180, grow: true },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 32, minWidth: 28 },
+  ], [t]);
+  const pendingColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "selection", label: null, ariaLabel: t("Selection"), defaultWidth: 42, minWidth: 34 },
+    { id: "message", label: t("Message ID"), defaultWidth: 170, minWidth: 130 },
+    { id: "consumer", label: t("Owner consumer"), defaultWidth: 150, minWidth: 110 },
+    { id: "idle", label: t("Idle time"), defaultWidth: 100, minWidth: 80 },
+    { id: "deliveries", label: t("Deliveries"), defaultWidth: 90, minWidth: 75 },
+    { id: "group", label: t("Group"), defaultWidth: 250, minWidth: 150, grow: true },
+    { id: "status", label: t("Status"), defaultWidth: 100, minWidth: 80 },
+  ], [t]);
 
   const acknowledge = async (entry: PendingEntry) => {
     try {
@@ -186,11 +213,32 @@ export function GroupsView({ initialConnectionId = "", initialStreamKey = "", on
           <div><span>{t("Consumers")}</span><strong>{group?.consumers ?? 0}</strong></div>
           <div><span>{t("Last delivered ID")}</span><strong className="mono small-value">{group?.lastDeliveredId ?? "—"}</strong></div>
         </div>
-        <div className="group-picker"><span>{t("Groups")}</span><div>{groups.map((item) => <button key={item.name} className={item.name === groupName ? "active" : ""} onClick={() => void changeGroup(item.name)}><span className="mono">{item.name}</span><em>{t("{consumers} consumers · {pending} pending", { consumers: item.consumers, pending: item.pending })}</em><ChevronRight size={15} /></button>)}</div></div>
+        <section className="group-picker">
+          <header><strong>{t("Groups")}</strong><span>{groups.length}</span></header>
+          <ResizableGrid className="group-picker-scroll" storageKey="groups-list" columns={groupColumns} headerClassName="group-picker-head">
+            <div className="group-picker-list">
+              {groups.map((item) => (
+                <button
+                  key={item.name}
+                  className={item.name === groupName ? "active" : ""}
+                  aria-pressed={item.name === groupName}
+                  onClick={() => void changeGroup(item.name)}
+                >
+                  <strong className="mono">{item.name}</strong>
+                  <span>{item.consumers}</span>
+                  <span>{item.pending}</span>
+                  <span>{item.lag}</span>
+                  <span className="mono">{item.lastDeliveredId}</span>
+                  <ChevronRight size={15} />
+                </button>
+              ))}
+              {!groups.length && !loading ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
+            </div>
+          </ResizableGrid>
+        </section>
         <div className="content-tabs"><button className={detailTab === "consumers" ? "active" : ""} onClick={() => setDetailTab("consumers")}>{t("Consumers")}</button><button className={detailTab === "pending" ? "active" : ""} onClick={() => setDetailTab("pending")}>{t("Pending entries")}</button></div>
         <div className="table-toolbar groups-toolbar"><label className="toolbar-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={detailTab === "consumers" ? t("Search consumer…") : t("Search ID or consumer…")} /></label><span className="selection-count">{detailTab === "consumers" ? t("{count} consumers", { count: filteredConsumers.length }) : t("{count} pending entries", { count: filteredPending.length })}</span></div>
-        {detailTab === "consumers" ? <div className="consumer-activity-table">
-          <div className="consumer-activity-head"><span>{t("Consumer")}</span><span>{t("Status")}</span><span>{t("Pending")}</span><span>{t("Idle")}</span><span>{t("Inactive")}</span><span>{t("Assigned messages")}</span><span /></div>
+        {detailTab === "consumers" ? <ResizableGrid className="consumer-activity-table" storageKey="consumer-activity" columns={consumerColumns} headerClassName="consumer-activity-head">
           {filteredConsumers.map((consumer) => {
             const assigned = pending.filter((entry) => entry.consumer === consumer.name);
             return <button key={consumer.name} className={`consumer-activity-row ${selectedConsumerName === consumer.name ? "selected" : ""}`} onClick={() => setSelectedConsumerName(consumer.name)}>
@@ -198,13 +246,12 @@ export function GroupsView({ initialConnectionId = "", initialStreamKey = "", on
             </button>;
           })}
           {!filteredConsumers.length && !loading ? <div className="empty-table">{groupName ? t("No consumers are registered.") : t("No consumer groups.")}</div> : null}
-        </div> : <div className="pending-table">
-          <div className="pending-head"><span /><span>{t("Message ID")}</span><span>{t("Owner consumer")}</span><span>{t("Idle time")}</span><span>{t("Deliveries")}</span><span>{t("Group")}</span><span>{t("Status")}</span></div>
+        </ResizableGrid> : <ResizableGrid className="pending-table" storageKey="pending-entries" columns={pendingColumns} headerClassName="pending-head">
           {filteredPending.map((entry) => <button className={`pending-row ${selectedId === entry.id ? "selected" : ""}`} key={entry.id} onClick={() => setSelectedId(entry.id)}>
             <span className="fake-check">{selectedId === entry.id ? <Check size={12} /> : null}</span><span className="mono">{entry.id}</span><span className="mono">{entry.consumer}</span><span className={entry.idleMs >= 30000 ? "amber" : ""}>{formatDuration(entry.idleMs)}</span><span>{entry.retryCount}</span><span className="mono payload-preview">{groupName}</span><span className="pending-status"><i />{t("Pending")}</span>
           </button>)}
           {!filteredPending.length && !loading ? <div className="empty-table">{groupName ? t("No pending entries.") : t("No consumer groups.")}</div> : null}
-        </div>}
+        </ResizableGrid>}
         <div className="table-footer"><span>{detailTab === "consumers" ? t("Showing {count} consumers", { count: filteredConsumers.length }) : t("Showing {count} pending entries", { count: filteredPending.length })}</span></div>
       </section>
 
@@ -240,6 +287,11 @@ function ConsumerActivityInspector({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const pendingColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "message", label: t("Message ID"), defaultWidth: 210, minWidth: 130, grow: true },
+    { id: "deliveries", label: t("Deliveries"), defaultWidth: 82, minWidth: 68 },
+    { id: "idle", label: t("Idle"), defaultWidth: 82, minWidth: 68 },
+  ], [t]);
   return <aside className="pending-inspector consumer-activity-inspector">
     <InspectorResizeHandle />
     <header><div><strong>{t("Consumer activity")}</strong><span className="mono">{consumer.name}</span></div><div><button onClick={onClose} aria-label={t("Close consumer details")}><X size={16} /></button></div></header>
@@ -256,11 +308,12 @@ function ConsumerActivityInspector({
     </div>
     <section className="consumer-assigned">
       <header><h2>{t("Assigned messages")}</h2><span>{pending.length}</span></header>
-      <div className="consumer-pending-head"><span>{t("Message ID")}</span><span>{t("Deliveries")}</span><span>{t("Idle")}</span></div>
-      <div className="consumer-pending-list">
-        {pending.map((entry) => <div key={entry.id}><strong className="mono">{entry.id}</strong><span>{entry.retryCount}</span><span>{formatDuration(entry.idleMs)}</span></div>)}
-        {!pending.length ? <div className="panel-empty">{t("No messages are assigned in the PEL.")}</div> : null}
-      </div>
+      <ResizableGrid className="consumer-pending-table" storageKey="consumer-inspector-pending" columns={pendingColumns} headerClassName="consumer-pending-head">
+        <div className="consumer-pending-list">
+          {pending.map((entry) => <div key={entry.id}><strong className="mono">{entry.id}</strong><span>{entry.retryCount}</span><span>{formatDuration(entry.idleMs)}</span></div>)}
+          {!pending.length ? <div className="panel-empty">{t("No messages are assigned in the PEL.")}</div> : null}
+        </div>
+      </ResizableGrid>
     </section>
   </aside>;
 }
