@@ -1,0 +1,11 @@
+node_modules
+dist
+bin
+.env
+config.local.properties
+streamscope.local.db*
+*.log
+.DS_Store
+sources/
+secrets/
+AGENTS.md

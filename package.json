@@ -1,0 +1,26 @@
+{
+  "name": "streamscope",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build:web": "tsc -b && vite build",
+    "build": "npm run build:web && go build -trimpath -ldflags='-s -w' -o bin/streamscope .",
+    "preview": "vite preview --host 0.0.0.0",
+    "check": "tsc -b && go test ./...",
+    "test": "go test ./..."
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "5.0.4",
+    "vite": "7.3.6",
+    "typescript": "5.9.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "lucide-react": "0.468.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2"
+  }
+}
