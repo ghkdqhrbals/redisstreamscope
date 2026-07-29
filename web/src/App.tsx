@@ -6,7 +6,6 @@ import { LoginView } from "./components/LoginView";
 import { PasswordChangeView } from "./components/PasswordChangeView";
 import { SetupWizard } from "./components/SetupWizard";
 import type { Page, RedisConnectionConfig, ToastState } from "./types";
-import { GroupsView } from "./views/GroupsView";
 import { OverviewView } from "./views/OverviewView";
 import { StreamsView } from "./views/StreamsView";
 import { ConnectionsView, SettingsView } from "./views/SystemViews";
@@ -28,7 +27,8 @@ export function App() {
   const [loginError, setLoginError] = useState("");
   const [page, setPage] = useState<Page>("streams");
   const [selectedStreamKey, setSelectedStreamKey] = useState("");
-  const [selectedGroupTarget, setSelectedGroupTarget] = useState<{ connectionId: string; key: string } | null>(null);
+  const [selectedStreamConnectionId, setSelectedStreamConnectionId] = useState("");
+  const [streamFocus, setStreamFocus] = useState<"groups" | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
@@ -129,20 +129,24 @@ export function App() {
         mobileNav={mobileNav}
         selectedStreamKey={selectedStreamKey}
         onNavigate={(nextPage) => {
-          if (nextPage === "groups") setSelectedGroupTarget(null);
+          if (nextPage !== "streams") setStreamFocus(null);
           setPage(nextPage);
         }}
-        onSelectStream={setSelectedStreamKey}
+        onSelectStream={(key) => {
+          setSelectedStreamConnectionId("");
+          setStreamFocus(null);
+          setSelectedStreamKey(key);
+        }}
         onToggleNav={() => setMobileNav((value) => !value)}
         onLogout={logout}
       >
         {page === "overview" ? <OverviewView onOpenGroups={(target) => {
-          setSelectedGroupTarget(target);
+          setSelectedStreamConnectionId(target.connectionId);
           setSelectedStreamKey(target.key);
-          setPage("groups");
+          setStreamFocus("groups");
+          setPage("streams");
         }} /> : null}
-        {page === "streams" ? <StreamsView selectedStreamKey={selectedStreamKey} onSelectedStreamChange={setSelectedStreamKey} onToast={setToast} /> : null}
-        {page === "groups" ? <GroupsView initialConnectionId={selectedGroupTarget?.connectionId} initialStreamKey={selectedGroupTarget?.key} onToast={setToast} /> : null}
+        {page === "streams" ? <StreamsView selectedConnectionId={selectedStreamConnectionId} selectedStreamKey={selectedStreamKey} focusSection={streamFocus} onSelectedStreamChange={setSelectedStreamKey} onToast={setToast} /> : null}
         {page === "connections" ? <ConnectionsView role={role} onToast={setToast} /> : null}
         {page === "access" && role === "admin" ? <AccessControlView onToast={setToast} /> : null}
         {page === "settings" ? <SettingsView username={username} role={role} onUsernameChanged={setUsername} onToast={setToast} /> : null}

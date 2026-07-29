@@ -72,6 +72,24 @@ func TestConnectionInputAllowsEmptyPassword(t *testing.T) {
 	}
 }
 
+func TestValidateMonitoredStreamKey(t *testing.T) {
+	key, err := validateMonitoredStreamKey("  orders:events  ")
+	if err != nil || key != "orders:events" {
+		t.Fatalf("expected a trimmed stream key, got key=%q err=%v", key, err)
+	}
+	for name, value := range map[string]string{
+		"empty":    "   ",
+		"too long": strings.Repeat("x", 1025),
+		"null":     "orders\x00events",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validateMonitoredStreamKey(value); err == nil {
+				t.Fatalf("expected %q to be rejected", value)
+			}
+		})
+	}
+}
+
 func TestEmptyPasswordKeepsExistingSecretDuringEdit(t *testing.T) {
 	input := connectionInput{
 		ID: "redis", Name: "Redis", Mode: "standalone",

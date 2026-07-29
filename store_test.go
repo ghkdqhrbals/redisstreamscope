@@ -125,6 +125,45 @@ func TestStoreUsersSessionsPermissionsAndLogs(t *testing.T) {
 	}
 }
 
+func TestStorePersistsMonitoredStreamsPerConnection(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	ctx := context.Background()
+
+	item, created, err := store.addMonitoredStream(ctx, "primary", "orders:events", "admin")
+	if err != nil || !created || item.ConnectionID != "primary" || item.Key != "orders:events" {
+		t.Fatalf("add monitored stream: item=%+v created=%v err=%v", item, created, err)
+	}
+	duplicate, created, err := store.addMonitoredStream(ctx, "primary", "orders:events", "another-user")
+	if err != nil || created || duplicate.CreatedBy != "admin" {
+		t.Fatalf("duplicate monitored stream: item=%+v created=%v err=%v", duplicate, created, err)
+	}
+	if _, created, err := store.addMonitoredStream(ctx, "archive", "orders:events", "admin"); err != nil || !created {
+		t.Fatalf("same key must be independently monitored by another connection: created=%v err=%v", created, err)
+	}
+
+	primary, err := store.listMonitoredStreams(ctx, "primary")
+	if err != nil || len(primary) != 1 || primary[0].Key != "orders:events" {
+		t.Fatalf("list primary monitored streams: items=%+v err=%v", primary, err)
+	}
+	deleted, err := store.deleteMonitoredStream(ctx, "primary", "orders:events")
+	if err != nil || !deleted {
+		t.Fatalf("delete monitored stream: deleted=%v err=%v", deleted, err)
+	}
+	deleted, err = store.deleteMonitoredStream(ctx, "primary", "orders:events")
+	if err != nil || deleted {
+		t.Fatalf("second delete must be idempotently absent: deleted=%v err=%v", deleted, err)
+	}
+	archive, err := store.listMonitoredStreams(ctx, "archive")
+	if err != nil || len(archive) != 1 {
+		t.Fatalf("deleting primary must not affect archive: items=%+v err=%v", archive, err)
+	}
+}
+
 func TestInitialAdminCanOnlyBeCreatedOnce(t *testing.T) {
 	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)

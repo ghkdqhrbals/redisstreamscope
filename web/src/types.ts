@@ -1,8 +1,11 @@
-export type Page = "overview" | "streams" | "groups" | "connections" | "access" | "settings";
+export type Page = "overview" | "streams" | "connections" | "access" | "settings";
 
 export type StreamItem = {
   key: string;
   length: number;
+  monitored: boolean;
+  available: boolean;
+  redisType: string;
 };
 
 export type OverviewStreamItem = StreamItem & {
@@ -11,6 +14,29 @@ export type OverviewStreamItem = StreamItem & {
   lagKnown: boolean;
   pending: number;
   lastConsumed: string;
+};
+
+export type StreamMetricPoint = {
+  timestamp: string;
+  entries: number;
+  consumerGroups: number;
+  consumerCount: number;
+  totalLag: number | null;
+  pending: number;
+  consumeDelayMs: number | null;
+  redisLatencyMs: number;
+  publishRate: number | null;
+  consumeRate: number | null;
+  lagDelta: number | null;
+};
+
+export type StreamMetricSeries = {
+  connectionId: string;
+  streamKey: string;
+  range: "1m" | "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
+  intervalSeconds: number;
+  generatedAt: string;
+  items: StreamMetricPoint[];
 };
 
 export type RedisConnection = {

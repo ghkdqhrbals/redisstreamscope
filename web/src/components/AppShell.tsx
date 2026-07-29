@@ -15,7 +15,6 @@ import {
   Settings,
   ShieldCheck,
   UserRoundCog,
-  UsersRound,
   X,
 } from "lucide-react";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
@@ -39,7 +38,6 @@ type AppShellProps = {
 const navigation = [
   { id: "overview" as const, label: "Overview", icon: Gauge },
   { id: "streams" as const, label: "Streams", icon: Database },
-  { id: "groups" as const, label: "Consumer Groups", icon: UsersRound },
   { id: "connections" as const, label: "Connections", icon: Activity },
   { id: "access" as const, label: "Access Control", icon: ShieldCheck },
   { id: "settings" as const, label: "Settings", icon: Settings },
@@ -94,7 +92,11 @@ export function AppShell({
     };
     loadConnections();
     window.addEventListener("streamscope:connections-changed", loadConnections);
-    return () => window.removeEventListener("streamscope:connections-changed", loadConnections);
+    window.addEventListener("streamscope:streams-changed", loadConnections);
+    return () => {
+      window.removeEventListener("streamscope:connections-changed", loadConnections);
+      window.removeEventListener("streamscope:streams-changed", loadConnections);
+    };
   }, []);
 
   useEffect(() => {

@@ -32,8 +32,9 @@
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#features" data-en="Features" data-ko="기능">Features</a>
           <a href="#compatibility" data-en="Compatibility" data-ko="호환성">Compatibility</a>
+          <a href="#technology" data-en="Technology" data-ko="기술">Technology</a>
           <a href="#quick-start" data-en="Quick start" data-ko="빠른 시작">Quick start</a>
-          <a href="#configuration" data-en="Configuration" data-ko="설정">Configuration</a>
+          <a href="#release" data-en="Release" data-ko="릴리스">Release</a>
         </nav>
         <div class="header-actions">
           <div class="language-switcher" role="group" aria-label="Language">
@@ -53,8 +54,8 @@
     <main id="main">
       <section class="hero" id="top">
         <div class="hero-copy">
-          <p class="eyebrow" data-en="Redis Streams operations console" data-ko="Redis Streams 운영 콘솔">
-            Redis Streams operations console
+          <p class="eyebrow" data-en="StreamScope 2.0.0 · Redis Streams operations console" data-ko="StreamScope 2.0.0 · Redis Streams 운영 콘솔">
+            StreamScope 2.0.0 · Redis Streams operations console
           </p>
           <h1
             data-en="Run it. Connect Redis in the browser. Done."
@@ -89,7 +90,7 @@
             <button
               class="copy-button"
               type="button"
-              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
+              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0"
               data-en="Copy"
               data-ko="복사"
               data-copied-en="Copied"
@@ -100,7 +101,7 @@
   --name streamscope \
   -p 8080:8080 \
   -v streamscope-data:/data \
-  ghcr.io/ghkdqhrbals/streamscope:latest</code></pre>
+  ghcr.io/ghkdqhrbals/streamscope:2.0.0</code></pre>
           <div class="login-row">
             <span data-en="Open" data-ko="접속">Open</span>
             <a href="http://localhost:8080">localhost:8080</a>
@@ -142,12 +143,12 @@
           </article>
           <article class="feature-card">
             <p class="feature-index">03</p>
-            <h3 data-en="Live tail" data-ko="실시간 Tail">Live tail</h3>
+            <h3 data-en="Time-series monitoring" data-ko="시계열 모니터링">Time-series monitoring</h3>
             <p
-              data-en="Follow new entries as they arrive, with reconnect handling and a clear connection state."
-              data-ko="새 엔트리를 실시간으로 확인하고, 재연결 처리와 연결 상태를 명확하게 표시합니다."
+              data-en="Track lag, pending work, consumption delay, Redis latency, and message rates with one-second live charts."
+              data-ko="1초 단위 실시간 차트로 Lag, Pending, 소비 지연, Redis 지연과 메시지 처리율을 추적합니다."
             >
-              Follow new entries as they arrive, with reconnect handling and a clear connection state.
+              Track lag, pending work, consumption delay, Redis latency, and message rates with one-second live charts.
             </p>
           </article>
           <article class="feature-card">
@@ -282,6 +283,48 @@
               Check, reconfigure, or remove Redis connections
             </figcaption>
           </figure>
+          <figure class="preview-frame">
+            <img
+              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-access-control.png"
+              alt="StreamScope roles and permissions interface"
+              data-alt-en="StreamScope roles and permissions interface"
+              data-alt-ko="StreamScope 역할과 권한 화면"
+            />
+            <figcaption data-en="Built-in roles and resource permissions" data-ko="내장 역할과 리소스 권한">
+              Built-in roles and resource permissions
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" id="technology">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Technology" data-ko="기술">Technology</p>
+          <h2 data-en="Small runtime. Familiar tools." data-ko="작은 런타임, 익숙한 기술.">
+            Small runtime. Familiar tools.
+          </h2>
+        </div>
+        <div class="technology-grid">
+          <article>
+            <span>Backend</span>
+            <strong>Go 1.25</strong>
+            <p>go-redis v9</p>
+          </article>
+          <article>
+            <span>Frontend</span>
+            <strong>React 19</strong>
+            <p>TypeScript 5.9 · Vite 7</p>
+          </article>
+          <article>
+            <span>Storage</span>
+            <strong>SQLite</strong>
+            <p>Embedded · WAL</p>
+          </article>
+          <article>
+            <span>Container</span>
+            <strong>Distroless</strong>
+            <p>linux/amd64 · linux/arm64</p>
+          </article>
         </div>
       </section>
 
@@ -298,11 +341,11 @@
             <div>
               <h3 data-en="Start StreamScope" data-ko="StreamScope 실행">Start StreamScope</h3>
               <div class="code-row">
-                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest</code>
+                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0</code>
                 <button
                   class="copy-button"
                   type="button"
-                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
+                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0"
                   data-en="Copy"
                   data-ko="복사"
                   data-copied-en="Copied"
@@ -344,45 +387,23 @@
         </aside>
       </section>
 
-      <section class="section" id="configuration">
+      <section class="section" id="release">
         <div class="section-heading">
-          <p class="eyebrow" data-en="Configuration" data-ko="설정">Configuration</p>
-          <h2 data-en="Configure everything in the browser." data-ko="모든 설정은 브라우저에서 하세요.">
-            Configure everything in the browser.
+          <p class="eyebrow" data-en="Release" data-ko="릴리스">Release</p>
+          <h2 data-en="StreamScope 2.0.0" data-ko="StreamScope 2.0.0">
+            StreamScope 2.0.0
           </h2>
         </div>
-        <div class="configuration-grid">
-          <article>
-            <h3 data-en="Persistent settings" data-ko="설정 유지">Persistent settings</h3>
-            <p
-              data-en="Mount /data to retain application settings across container updates and restarts."
-              data-ko="/data 볼륨을 연결하면 컨테이너 업데이트와 재시작 후에도 설정이 유지됩니다."
-            >
-              Mount /data to retain application settings across container updates and restarts.
-            </p>
-          </article>
-          <article>
-            <h3 data-en="Redis connections" data-ko="Redis 연결">Redis connections</h3>
-            <p
-              data-en="Add, test, reconfigure, or remove Redis connections from Settings. There is nothing to prepare before the container starts."
-              data-ko="Settings에서 Redis 연결을 추가, 테스트, 재설정, 삭제할 수 있습니다. 컨테이너를 실행하기 전에 준비할 것은 없습니다."
-            >
-              Add, test, reconfigure, or remove Redis connections from Settings. There is nothing to prepare before the container starts.
-            </p>
-          </article>
-          <article>
-            <h3 data-en="Container port" data-ko="컨테이너 포트">Container port</h3>
-            <p
-              data-en="The internal port defaults to 8080. Map any host port with Docker, for example -p 9090:8080."
-              data-ko="내부 포트 기본값은 8080입니다. -p 9090:8080처럼 원하는 호스트 포트를 연결할 수 있습니다."
-            >
-              The internal port defaults to 8080. Map any host port with Docker, for example -p 9090:8080.
-            </p>
-          </article>
+        <div class="release-card">
+          <div>
+            <span data-en="Current release" data-ko="현재 릴리스">Current release</span>
+            <strong>v2.0.0</strong>
+          </div>
+          <code>ghcr.io/ghkdqhrbals/streamscope:2.0.0</code>
         </div>
         <div class="documentation-links">
-          <a href="https://github.com/ghkdqhrbals/streamscope#quick-start">
-            <span data-en="Quick start guide" data-ko="빠른 시작 가이드">Quick start guide</span>
+          <a href="https://github.com/ghkdqhrbals/streamscope/releases/tag/v2.0.0">
+            <span data-en="Release notes" data-ko="릴리스 노트">Release notes</span>
             <span aria-hidden="true">→</span>
           </a>
           <a href="https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope">

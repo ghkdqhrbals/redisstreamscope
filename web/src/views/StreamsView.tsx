@@ -4,10 +4,12 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
   ArrowDownUp,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clipboard,
@@ -18,33 +20,41 @@ import {
   RefreshCw,
   Search,
   Send,
+  Trash2,
   UsersRound,
+  WrapText,
   X,
 } from "lucide-react";
 import { api } from "../api";
 import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
-import type { ConsumerGroup, ConsumerInfo, PendingEntry, RedisConnection, RedisEntry, StreamItem, ToastState } from "../types";
+import type { ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisEntry, StreamItem, ToastState } from "../types";
 
 type StreamsViewProps = {
+  selectedConnectionId?: string;
   selectedStreamKey: string;
+  focusSection?: "groups" | null;
   onSelectedStreamChange: (key: string) => void;
   onToast: (toast: ToastState) => void;
 };
 
 type MessageSortKey = "id" | "timestamp" | "size" | "fields";
+const messagePageSize = 100;
 
-export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast }: StreamsViewProps) {
+export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focusSection = null, onSelectedStreamChange, onToast }: StreamsViewProps) {
   const { locale, t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
   const [connectionId, setConnectionId] = useState("");
   const [streams, setStreams] = useState<StreamItem[]>([]);
+  const [overviewStreams, setOverviewStreams] = useState<OverviewStreamItem[]>([]);
   const [streamCursor, setStreamCursor] = useState(0);
   const [hasMoreStreams, setHasMoreStreams] = useState(false);
   const [key, setKey] = useState("");
   const [entries, setEntries] = useState<RedisEntry[]>([]);
   const [entryCursor, setEntryCursor] = useState("");
+  const [entryPageCursor, setEntryPageCursor] = useState("+");
+  const [entryCursorHistory, setEntryCursorHistory] = useState<string[]>([]);
   const [hasMoreEntries, setHasMoreEntries] = useState(false);
   const [groups, setGroups] = useState<ConsumerGroup[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -56,21 +66,30 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   const [paused, setPaused] = useState(false);
   const [tab, setTab] = useState<"messages" | "groups" | "info">("info");
   const [showAdd, setShowAdd] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(false);
+  const [streamsSectionOpen, setStreamsSectionOpen] = useState(true);
+  const [messagesSectionOpen, setMessagesSectionOpen] = useState(true);
+  const [groupsSectionOpen, setGroupsSectionOpen] = useState(true);
+  const [streamMutation, setStreamMutation] = useState("");
   const [selectedGroupName, setSelectedGroupName] = useState("");
   const [groupConsumers, setGroupConsumers] = useState<ConsumerInfo[]>([]);
   const [groupPending, setGroupPending] = useState<PendingEntry[]>([]);
   const [groupDetailLoading, setGroupDetailLoading] = useState(false);
   const [loadingMoreStreams, setLoadingMoreStreams] = useState(false);
-  const [loadingMoreEntries, setLoadingMoreEntries] = useState(false);
+  const [entryPageLoading, setEntryPageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const groupsSectionRef = useRef<HTMLElement>(null);
   const deferredStreamQuery = useDeferredValue(streamQuery.trim().toLowerCase());
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const streamColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "key", label: t("Stream key"), defaultWidth: 280, minWidth: 180, grow: true },
-    { id: "length", label: t("Length"), defaultWidth: 120, minWidth: 80 },
-    { id: "status", label: t("Status"), defaultWidth: 110, minWidth: 85 },
-    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 36, minWidth: 28 },
+    { id: "key", label: t("Stream key"), defaultWidth: 260, minWidth: 180, grow: true },
+    { id: "entries", label: t("Entries"), defaultWidth: 100, minWidth: 80 },
+    { id: "groups", label: t("Consumer groups"), defaultWidth: 145, minWidth: 115 },
+    { id: "lag", label: t("Total lag"), defaultWidth: 105, minWidth: 85 },
+    { id: "pending", label: t("Pending"), defaultWidth: 100, minWidth: 80 },
+    { id: "last-consumed", label: t("Last consumed"), defaultWidth: 190, minWidth: 145 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 62, minWidth: 56 },
   ], [t]);
   const messageColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "id", label: "ID", defaultWidth: 180, minWidth: 130 },
@@ -91,15 +110,21 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   const loadEntriesAndGroups = useCallback(async (nextConnectionId: string, nextKey: string) => {
     if (!nextConnectionId || !nextKey) {
       setEntries([]);
+      setEntryCursor("");
+      setEntryPageCursor("+");
+      setEntryCursorHistory([]);
+      setHasMoreEntries(false);
       setGroups([]);
       return;
     }
     const [entryResponse, groupResponse] = await Promise.all([
-      api.entries(nextConnectionId, nextKey),
+      api.entries(nextConnectionId, nextKey, messagePageSize),
       api.groups(nextConnectionId, nextKey).catch(() => ({ items: [] })),
     ]);
     setEntries(entryResponse.items);
     setEntryCursor(entryResponse.nextCursor);
+    setEntryPageCursor("+");
+    setEntryCursorHistory([]);
     setHasMoreEntries(entryResponse.hasMore);
     setGroups(groupResponse.items);
     setSelectedId(entryResponse.items[0]?.id ?? "");
@@ -111,15 +136,20 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     try {
       const connectionResponse = await api.connections();
       setConnections(connectionResponse.items);
-      const nextConnectionId = connectionId || connectionResponse.items[0]?.id || "";
+      const nextConnectionId = selectedConnectionId || connectionId || connectionResponse.items[0]?.id || "";
       setConnectionId(nextConnectionId);
       if (!nextConnectionId) {
         setStreams([]);
+        setOverviewStreams([]);
         setEntries([]);
         return;
       }
-      const streamResponse = await api.streams(nextConnectionId);
+      const [streamResponse, overviewResponse] = await Promise.all([
+        api.streams(nextConnectionId),
+        api.overview(nextConnectionId),
+      ]);
       setStreams(streamResponse.items);
+      setOverviewStreams(overviewResponse.items);
       setStreamCursor(streamResponse.nextCursor);
       setHasMoreStreams(streamResponse.hasMore);
       const preferredKey = selectedStreamKey || key;
@@ -132,7 +162,7 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     } finally {
       setLoading(false);
     }
-  }, [connectionId, key, loadEntriesAndGroups, onSelectedStreamChange, selectedStreamKey, t]);
+  }, [connectionId, key, loadEntriesAndGroups, onSelectedStreamChange, selectedConnectionId, selectedStreamKey, t]);
 
   useEffect(() => { void load(); }, []); // Initial discovery only.
 
@@ -161,26 +191,6 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     };
   }, [connectionId, key, live, paused]);
 
-  const changeConnection = async (nextConnectionId: string) => {
-    setConnectionId(nextConnectionId);
-    setLoading(true);
-    try {
-      const response = await api.streams(nextConnectionId);
-      setStreams(response.items);
-      setStreamCursor(response.nextCursor);
-      setHasMoreStreams(response.hasMore);
-      const nextKey = response.items[0]?.key ?? "";
-      setKey(nextKey);
-      onSelectedStreamChange(nextKey);
-      setSelectedGroupName("");
-      await loadEntriesAndGroups(nextConnectionId, nextKey);
-    } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to change the connection."));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const changeStream = async (nextKey: string) => {
     setKey(nextKey);
     onSelectedStreamChange(nextKey);
@@ -201,6 +211,14 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     void changeStream(selectedStreamKey);
   }, [selectedStreamKey]);
 
+  useEffect(() => {
+    if (focusSection !== "groups" || loading) return;
+    setMessagesSectionOpen(false);
+    setGroupsSectionOpen(true);
+    const frame = window.requestAnimationFrame(() => groupsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusSection, key, loading]);
+
   const filteredEntries = useMemo(() => {
     if (!deferredSearch) return entries;
     return entries.filter((entry) => `${entry.id} ${Object.entries(entry.fields).flat().join(" ")}`.toLowerCase().includes(deferredSearch));
@@ -209,6 +227,10 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     if (!deferredStreamQuery) return streams;
     return streams.filter((stream) => stream.key.toLowerCase().includes(deferredStreamQuery));
   }, [deferredStreamQuery, streams]);
+  const overviewByKey = useMemo(
+    () => new Map(overviewStreams.map((stream) => [stream.key, stream])),
+    [overviewStreams],
+  );
   const displayedEntries = useMemo(() => [...filteredEntries].sort((left, right) => {
     let comparison = 0;
     if (messageSort.key === "id") comparison = compareStreamIds(left.id, right.id);
@@ -242,11 +264,15 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     setLoadingMoreStreams(true);
     setError("");
     try {
-      const response = await api.streams(connectionId, streamCursor);
+      const [response, overviewResponse] = await Promise.all([
+        api.streams(connectionId, streamCursor),
+        api.overview(connectionId),
+      ]);
       setStreams((current) => {
         const existing = new Set(current.map((stream) => stream.key));
         return [...current, ...response.items.filter((stream) => !existing.has(stream.key))];
       });
+      setOverviewStreams(overviewResponse.items);
       setStreamCursor(response.nextCursor);
       setHasMoreStreams(response.hasMore);
     } catch (cause) {
@@ -256,22 +282,91 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
     }
   };
 
-  const loadMoreEntries = async () => {
-    if (!connectionId || !key || !entryCursor || !hasMoreEntries || loadingMoreEntries) return;
-    setLoadingMoreEntries(true);
+  const loadEntryPage = async (cursor: string, history: string[]) => {
+    if (!connectionId || !key || entryPageLoading) return;
+    setEntryPageLoading(true);
+    setError("");
+    setLive(false);
+    setPaused(false);
+    try {
+      const response = await api.entries(connectionId, key, messagePageSize, cursor);
+      setEntries(response.items);
+      setEntryCursor(response.nextCursor);
+      setEntryPageCursor(cursor);
+      setEntryCursorHistory(history);
+      setHasMoreEntries(response.hasMore);
+      setSelectedId("");
+    } catch (cause) {
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to load the message page."));
+    } finally {
+      setEntryPageLoading(false);
+    }
+  };
+
+  const loadNextEntryPage = async () => {
+    if (!entryCursor || !hasMoreEntries) return;
+    await loadEntryPage(entryCursor, [...entryCursorHistory, entryPageCursor]);
+  };
+
+  const loadPreviousEntryPage = async () => {
+    if (!entryCursorHistory.length) return;
+    const previousCursor = entryCursorHistory[entryCursorHistory.length - 1];
+    await loadEntryPage(previousCursor, entryCursorHistory.slice(0, -1));
+  };
+
+  const monitorStreams = async (keys: string[]) => {
+    let available = 0;
+    let waiting = 0;
+    for (const nextKey of keys) {
+      const response = await api.monitorStream(connectionId, nextKey);
+      if (response.available) available += 1;
+      else waiting += 1;
+    }
+    const [streamResponse, overviewResponse] = await Promise.all([
+      api.streams(connectionId),
+      api.overview(connectionId),
+    ]);
+    setStreams(streamResponse.items);
+    setOverviewStreams(overviewResponse.items);
+    setStreamCursor(streamResponse.nextCursor);
+    setHasMoreStreams(streamResponse.hasMore);
+    setShowMonitor(false);
+    window.dispatchEvent(new Event("streamscope:streams-changed"));
+    await changeStream(keys[0]);
+    onToast({
+      kind: "success",
+      title: t("Stream keys added to monitoring"),
+      message: t("Monitoring {available} · Waiting {waiting}", { available, waiting }),
+    });
+  };
+
+  const unmonitorStream = async (streamKey: string) => {
+    setStreamMutation(streamKey);
     setError("");
     try {
-      const response = await api.entries(connectionId, key, 100, entryCursor);
-      setEntries((current) => {
-        const existing = new Set(current.map((entry) => entry.id));
-        return [...current, ...response.items.filter((entry) => !existing.has(entry.id))];
+      await api.unmonitorStream(connectionId, streamKey);
+      const [response, overviewResponse] = await Promise.all([
+        api.streams(connectionId),
+        api.overview(connectionId),
+      ]);
+      setStreams(response.items);
+      setOverviewStreams(overviewResponse.items);
+      setStreamCursor(response.nextCursor);
+      setHasMoreStreams(response.hasMore);
+      if (streamKey === key && !response.items.some((stream) => stream.key === streamKey)) {
+        const nextKey = response.items.find((stream) => stream.available)?.key ?? "";
+        await changeStream(nextKey);
+      }
+      window.dispatchEvent(new Event("streamscope:streams-changed"));
+      onToast({
+        kind: "success",
+        title: t("Removed from monitoring"),
+        message: t("Stopped monitoring {key}.", { key: streamKey }),
       });
-      setEntryCursor(response.nextCursor);
-      setHasMoreEntries(response.hasMore);
     } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to load more entries."));
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to remove the stream key."));
     } finally {
-      setLoadingMoreEntries(false);
+      setStreamMutation("");
     }
   };
 
@@ -307,28 +402,71 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
             <h1>{key || t("Redis Streams")} {key ? <button title={t("Copy key")} aria-label={t("Copy key")} onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={15} /></button> : null}</h1>
             <p><i className={connections.find((connection) => connection.id === connectionId)?.healthy ? "health-dot" : "health-dot health-dot--down"} />{connections.find((connection) => connection.id === connectionId)?.name ?? "Redis"}</p>
           </div>
-          <div className="header-actions stream-selectors">
-            <select value={connectionId} onChange={(event) => void changeConnection(event.target.value)}>{connections.map((connection) => <option value={connection.id} key={connection.id}>{connection.name}</option>)}</select>
-            <select value={key} onChange={(event) => void changeStream(event.target.value)}>{streams.map((stream) => <option value={stream.key} key={stream.key}>{stream.key}</option>)}</select>
+          <div className="header-actions">
             <button onClick={() => void load()} disabled={loading}><RefreshCw size={15} />{loading ? t("Loading…") : t("Refresh")}</button>
-            <button className="accent-button" disabled={!key} onClick={() => setShowAdd(true)}><Plus size={15} />{t("Add message")}</button>
           </div>
         </div>
         {error ? <div className="page-error">{error}</div> : null}
 
-        <section className="stream-catalog">
-          <header><h2>{t("Streams")}</h2><label><Search size={15} /><input value={streamQuery} onChange={(event) => setStreamQuery(event.target.value)} placeholder={t("Filter stream keys…")} /></label></header>
-          <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
-            {filteredStreams.map((stream) => <button key={stream.key} className={stream.key === key ? "selected" : ""} onClick={() => void changeStream(stream.key)}>
-              <span className="mono">{stream.key}</span><span>{stream.length.toLocaleString(locale)}</span><span>{stream.key === key ? t("Opened") : t("Ready")}</span><ChevronRight size={16} />
-            </button>)}
+        <section className={`stream-catalog ${key ? "stream-catalog--connected" : ""}`}>
+          <header>
+            <button type="button" className="stream-section-toggle" aria-expanded={streamsSectionOpen} onClick={() => setStreamsSectionOpen((current) => !current)}>
+              {streamsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+              <h2>{t("Streams")}</h2>
+            </button>
+            {streamsSectionOpen ? <div className="stream-catalog-actions">
+              <label><Search size={15} /><input value={streamQuery} onChange={(event) => setStreamQuery(event.target.value)} placeholder={t("Filter stream keys…")} /></label>
+              <button type="button" className="stream-monitor-button" disabled={!connectionId} onClick={() => setShowMonitor(true)}><Plus size={15} />{t("Add stream keys for monitoring")}</button>
+            </div> : <strong className="stream-section-count">{streams.length.toLocaleString(locale)}</strong>}
+          </header>
+          {streamsSectionOpen ? <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog-metrics" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
+            {filteredStreams.map((stream) => {
+              const metrics = overviewByKey.get(stream.key);
+              return <div
+                key={stream.key}
+                className={`stream-catalog-row ${stream.key === key ? "selected" : ""}`}
+              >
+              <button
+                type="button"
+                className="stream-catalog-open"
+                aria-label={`${stream.key} ${stream.length} ${metrics?.consumerGroups ?? 0} ${metrics?.totalLag ?? 0} ${metrics?.pending ?? 0} ${metrics?.lastConsumed || "—"}`}
+                aria-expanded={stream.key === key}
+                onClick={() => void changeStream(stream.key)}
+              />
+              <span className="stream-key-cell mono">
+                <span>{stream.key}</span>
+                {!stream.available ? <em>{t("Waiting")}</em> : null}
+              </span>
+              <span>{(metrics?.length ?? stream.length).toLocaleString(locale)}</span>
+              <span>{(metrics?.consumerGroups ?? 0).toLocaleString(locale)}</span>
+              <span>{metrics ? (metrics.lagKnown ? metrics.totalLag.toLocaleString(locale) : "—") : "—"}</span>
+              <span>{(metrics?.pending ?? 0).toLocaleString(locale)}</span>
+              <span className="mono stream-catalog-last-consumed" title={metrics?.lastConsumed || "—"}>{metrics?.lastConsumed || "—"}</span>
+              <div className="stream-row-actions">
+                {stream.key === key ? <ChevronDown size={17} /> : <ChevronRight size={16} />}
+                {stream.monitored ? <button
+                  type="button"
+                  className="stream-unmonitor-button"
+                  disabled={streamMutation === stream.key}
+                  aria-label={t("Remove from monitoring")}
+                  title={t("Remove from monitoring")}
+                  onClick={() => void unmonitorStream(stream.key)}
+                ><Trash2 size={15} /></button>
+                  : null}
+              </div>
+              </div>;
+            })}
             {!filteredStreams.length && !loading ? <div className="panel-empty">{streams.length ? t("No streams match this filter.") : t("No streams match the current pattern.")}</div> : null}
             {hasMoreStreams && !streamQuery ? <div className="table-load-more"><button type="button" onClick={() => void loadMoreStreams()} disabled={loadingMoreStreams}>{loadingMoreStreams ? t("Loading more…") : t("Load more")}</button></div> : null}
-          </ResizableGrid>
+          </ResizableGrid> : null}
         </section>
 
         {key ? <div className="stream-detail">
-          <div className="stream-detail-heading"><div><span>{t("Selected stream")}</span><h2 className="mono">{key}</h2></div><button onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={14} />{t("Copy key")}</button></div>
+          <div className="stream-detail-heading">
+            <div className="stream-detail-identity"><h2 className="mono">{key}</h2></div>
+            <button onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={14} />{t("Copy key")}</button>
+          </div>
+          <div className="stream-detail-tree">
           <div className="kpi-strip stream-kpis-real">
             <div><span>{t("Length")}</span><strong>{selectedStream?.length.toLocaleString(locale) ?? "0"}</strong></div>
             <div><span>{t("Consumer groups")}</span><strong>{groups.length}</strong></div>
@@ -337,7 +475,14 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
           </div>
 
           <section className="stream-data-section">
-            <div className="surface-heading"><h2>{t("Messages")}</h2></div>
+            <div className="surface-heading stream-section-heading">
+              <button type="button" className="stream-section-toggle" aria-expanded={messagesSectionOpen} onClick={() => setMessagesSectionOpen((current) => !current)}>
+                {messagesSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+                <span><h2>{t("Messages")}</h2></span>
+              </button>
+              <button type="button" className="stream-section-action" disabled={!key} onClick={() => setShowAdd(true)}><Plus size={15} />{t("Add message")}</button>
+            </div>
+          {messagesSectionOpen ? <>
           <div className="table-toolbar">
             <label className="toolbar-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search ID, field or value…")} /></label>
             <button className={`live-button ${live ? "active" : ""}`} aria-pressed={live} onClick={() => setLive((value) => !value)}><span /><span>{t("Live tail")}</span></button>
@@ -368,30 +513,45 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
               </div>
             </ResizableGrid>
           </div>
-          <div className="table-footer"><span>{t("Showing {visible} of {total} entries", { visible: displayedEntries.length, total: selectedStream?.length.toLocaleString(locale) ?? 0 })}</span><div><span>{t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}</span>{hasMoreEntries ? <button type="button" onClick={() => void loadMoreEntries()} disabled={loadingMoreEntries}>{loadingMoreEntries ? t("Loading more…") : t("Load more")}</button> : null}</div></div>
+          <div className="table-footer">
+            <span>{t("Showing {visible} of {total} entries", { visible: displayedEntries.length, total: selectedStream?.length.toLocaleString(locale) ?? 0 })}</span>
+            <div>
+              <span>{t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}</span>
+              <div className="message-pagination">
+                <button type="button" onClick={() => void loadPreviousEntryPage()} disabled={entryPageLoading || !entryCursorHistory.length}><ChevronLeft size={14} />{t("Previous")}</button>
+                <span>{t("Page {page}", { page: entryCursorHistory.length + 1 })}</span>
+                <button type="button" onClick={() => void loadNextEntryPage()} disabled={entryPageLoading || !hasMoreEntries}>{t("Next")}<ChevronRight size={14} /></button>
+              </div>
+            </div>
+          </div>
+          </> : null}
           </section>
 
-          <section className="stream-data-section stream-groups-section">
-          <div className="surface-heading"><h2>{t("Consumer groups")}</h2></div>
-          <ResizableGrid className="simple-table" storageKey="stream-consumer-groups" columns={groupColumns} headerClassName="simple-head">
-            {groups.map((group) => <button className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`} key={group.name} onClick={() => void openGroup(group.name)}><span><UsersRound size={15} />{group.name}</span><span>{group.consumers}</span><span>{group.pending}</span><span>{group.lag}</span><span className="mono">{group.lastDeliveredId}</span><ChevronRight size={16} /></button>)}
+          <section className="stream-data-section stream-groups-section" ref={groupsSectionRef}>
+          <div className="surface-heading stream-section-heading">
+            <button type="button" className="stream-section-toggle" aria-expanded={groupsSectionOpen} onClick={() => setGroupsSectionOpen((current) => !current)}>
+              {groupsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+              <span><h2>{t("Consumer groups")}</h2></span>
+            </button>
+            <strong className="stream-section-count">{groups.length}</strong>
+          </div>
+          {groupsSectionOpen ? <ResizableGrid className="simple-table" storageKey="stream-consumer-groups" columns={groupColumns} headerClassName="simple-head">
+            {groups.map((group) => <button className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`} key={group.name} onClick={() => void openGroup(group.name)}><span><UsersRound size={15} />{group.name}</span><span>{group.consumers}</span><span>{group.pending}</span><span>{group.lag}</span><span className="mono stream-id-cell" title={group.lastDeliveredId}>{group.lastDeliveredId}</span><ChevronRight size={16} /></button>)}
             {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
-          </ResizableGrid>
+          </ResizableGrid> : null}
           </section>
-
-          <div className="stream-data-section info-grid">
-          <section><h2>{t("Stream metadata")}</h2><div className="detail-list"><div><span>{t("Key")}</span><strong className="mono">{key || "—"}</strong></div><div><span>{t("Length")}</span><strong>{selectedStream?.length.toLocaleString(locale) ?? 0}</strong></div><div><span>{t("Groups")}</span><strong>{groups.length}</strong></div><div><span>{t("Latest ID")}</span><strong className="mono">{entries[0]?.id ?? "—"}</strong></div></div></section>
           </div>
         </div> : null}
       </section>
 
-      {showEntryInspector ? <EntryInspector entry={showEntryInspector} stream={key} onClose={() => setSelectedId("")} onMove={moveSelection} onToast={onToast} /> : null}
+      {showEntryInspector ? <EntryInspector entry={showEntryInspector} stream={key} onClose={() => setSelectedId("")} onMove={moveSelection} /> : null}
       {showGroupInspector ? <ConsumerGroupInspector group={showGroupInspector} stream={key} consumers={groupConsumers} pending={groupPending} loading={groupDetailLoading} onClose={() => setSelectedGroupName("")} /> : null}
       {showAdd ? <AddMessageModal connectionId={connectionId} stream={key} onClose={() => setShowAdd(false)} onAdded={async (id) => {
         setShowAdd(false);
         await loadEntriesAndGroups(connectionId, key);
         onToast({ kind: "success", title: t("Message added"), message: t("Added entry {id}.", { id }) });
       }} /> : null}
+      {showMonitor ? <MonitorStreamModal connectionId={connectionId} onClose={() => setShowMonitor(false)} onSubmit={monitorStreams} /> : null}
     </div>
   );
 }
@@ -454,7 +614,7 @@ function ConsumerGroupInspector({
       <div><span>{t("Consumers")}</span><strong>{group.consumers}</strong></div>
       <div><span>{t("Pending")}</span><strong>{group.pending}</strong></div>
       <div><span>{t("Lag")}</span><strong>{group.lag}</strong></div>
-      <div><span>{t("Last delivered")}</span><strong className="mono">{group.lastDeliveredId}</strong></div>
+      <div><span>{t("Last delivered")}</span><strong className="mono stream-id-cell" title={group.lastDeliveredId}>{group.lastDeliveredId}</strong></div>
     </div>
     <section className="consumer-section">
       <header><h2>{t("Consumers")}</h2><span>{consumers.length}</span></header>
@@ -481,20 +641,81 @@ function ConsumerGroupInspector({
   </aside>;
 }
 
-function EntryInspector({ entry, stream, onClose, onMove, onToast }: { entry: RedisEntry; stream: string; onClose: () => void; onMove: (step: number) => void; onToast: (toast: ToastState) => void }) {
+function EntryInspector({ entry, stream, onClose, onMove }: { entry: RedisEntry; stream: string; onClose: () => void; onMove: (step: number) => void }) {
   const { locale, t } = useI18n();
-  const copyPayload = async () => {
-    await navigator.clipboard?.writeText(JSON.stringify(entry.fields, null, 2));
-    onToast({ kind: "success", title: t("Payload copied"), message: t("The JSON payload was copied to the clipboard.") });
-  };
+  const [wrapLines, setWrapLines] = useState(true);
+  const payload = useMemo(() => presentEntryPayload(entry.fields), [entry.fields]);
   return <aside className="inspector">
     <InspectorResizeHandle />
     <header><div><strong>{t("Entry details")}</strong><span className="mono">{entry.id}</span></div><div className="inspector-actions"><button onClick={() => onMove(-1)} aria-label={t("Previous entry")}><ChevronLeft size={16} /></button><button onClick={() => onMove(1)} aria-label={t("Next entry")}><ChevronRight size={16} /></button><button onClick={onClose} aria-label={t("Close entry details")}><X size={17} /></button></div></header>
     <div className="inspector-tabs"><button className="active">{t("Payload")}</button></div>
-    <div className="code-toolbar"><span>{t("Redis hash fields")}</span><button onClick={copyPayload}><Clipboard size={13} />{t("Copy JSON")}</button></div>
-    <div className="code-view"><span className="line-no">1</span><code>{"{"}</code>{Object.entries(entry.fields).map(([field, value], index) => <div className="code-line" key={field}><span className="line-no">{index + 2}</span><code><i>"{field}"</i>: <b>"{String(value)}"</b>{index < Object.keys(entry.fields).length - 1 ? "," : ""}</code></div>)}<span className="line-no">{Object.keys(entry.fields).length + 2}</span><code>{"}"}</code></div>
+    <div className="code-toolbar"><span>{t(payload.format === "json" ? "JSON payload" : payload.format === "text" ? "Text payload" : "Redis fields")}</span><button className={wrapLines ? "active" : ""} aria-pressed={wrapLines} aria-label={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} title={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} onClick={() => setWrapLines((current) => !current)}><WrapText size={15} /></button></div>
+    <pre className={`payload-code-view ${wrapLines ? "wrap" : ""}`}>{payload.content}</pre>
     <div className="inspector-section"><h4>{t("Metadata")}</h4><div className="detail-list"><div><span>Stream</span><strong className="mono">{stream}</strong></div><div><span>{t("Timestamp")}</span><strong className="mono">{formatTimestamp(entry.timestamp, locale)}</strong></div><div><span>{t("Size")}</span><strong>{new Blob([JSON.stringify(entry.fields)]).size} B</strong></div><div><span>{t("Fields")}</span><strong>{Object.keys(entry.fields).length}</strong></div></div></div>
   </aside>;
+}
+
+function MonitorStreamModal({ connectionId, onClose, onSubmit }: { connectionId: string; onClose: () => void; onSubmit: (keys: string[]) => Promise<void> }) {
+  const { t } = useI18n();
+  const [value, setValue] = useState("");
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
+  const [checkedSignature, setCheckedSignature] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const keys = useMemo(
+    () => Array.from(new Set(value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))),
+    [value],
+  );
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (keys.length > 100) {
+      setError(t("You can add up to 100 stream keys at once."));
+      return;
+    }
+    const signature = keys.join("\n");
+    setBusy(true);
+    setError("");
+    try {
+      if (missingKeys.length && checkedSignature === signature) {
+        await onSubmit(keys);
+        return;
+      }
+      const statuses: Array<{ key: string; available: boolean; exists: boolean; redisType: string }> = [];
+      for (const key of keys) {
+        statuses.push(await api.streamStatus(connectionId, key));
+      }
+      const invalid = statuses.filter((status) => status.exists && !status.available);
+      if (invalid.length) {
+        setError(t("These keys are not Redis Streams: {keys}", {
+          keys: invalid.slice(0, 5).map((status) => `${status.key} (${status.redisType})`).join(", "),
+        }));
+        return;
+      }
+      const missing = statuses.filter((status) => !status.exists).map((status) => status.key);
+      if (missing.length) {
+        setMissingKeys(missing);
+        setCheckedSignature(signature);
+        return;
+      }
+      await onSubmit(statuses.map((status) => status.key));
+    } catch (cause) {
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to add the stream keys to monitoring."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="modal-backdrop" onMouseDown={onClose}><form className="modal stream-monitor-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+    <header><h2>{t("Add stream keys for monitoring")}</h2><button type="button" onClick={onClose} aria-label={t("Close add stream keys for monitoring dialog")}><X size={18} /></button></header>
+    <label>{t("Stream keys")}<textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setMissingKeys([]); setCheckedSignature(""); setError(""); }} placeholder={t("One stream key per line · up to 100")} rows={7} required /></label>
+    {missingKeys.length ? <div className="stream-key-warning" role="alert">
+      <strong>{t("Stream keys not found ({count})", { count: missingKeys.length })}</strong>
+      <ul>{missingKeys.slice(0, 6).map((key) => <li className="mono" key={key}>{key}</li>)}</ul>
+      {missingKeys.length > 6 ? <p>{t("and {count} more", { count: missingKeys.length - 6 })}</p> : null}
+      <p>{t("Add them to monitoring anyway and keep them in Waiting until they are created?")}</p>
+    </div> : null}
+    {error ? <div className="login-error">{error}</div> : null}
+    <footer><button type="button" onClick={onClose}>{t("Cancel")}</button><button className="primary-button" disabled={busy || !keys.length}><Plus size={14} />{busy ? t(missingKeys.length ? "Adding…" : "Checking…") : missingKeys.length ? t("Monitor anyway") : keys.length ? t("Add {count} to monitoring", { count: keys.length }) : t("Add to monitoring")}</button></footer>
+  </form></div>;
 }
 
 function AddMessageModal({ connectionId, stream, onClose, onAdded }: { connectionId: string; stream: string; onClose: () => void; onAdded: (id: string) => void }) {
@@ -554,6 +775,20 @@ function formatTimestamp(value: string, locale: string) {
 
 function entrySize(entry: RedisEntry) {
   return new Blob([JSON.stringify(entry.fields)]).size;
+}
+
+function presentEntryPayload(fields: Record<string, string | number>): { content: string; format: "json" | "text" | "fields" } {
+  const keys = Object.keys(fields);
+  const payloadKey = keys.find((key) => key.toLowerCase() === "payload");
+  const value = payloadKey ? fields[payloadKey] : keys.length === 1 ? fields[keys[0]] : fields;
+  if (typeof value !== "string") {
+    return { content: JSON.stringify(value, null, 2), format: value === fields ? "fields" : "json" };
+  }
+  try {
+    return { content: JSON.stringify(JSON.parse(value), null, 2), format: "json" };
+  } catch {
+    return { content: value, format: "text" };
+  }
 }
 
 function compareStreamIds(left: string, right: string) {

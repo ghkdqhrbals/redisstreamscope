@@ -62,6 +62,13 @@ type grantRecord struct {
 	Effect string `json:"effect"`
 }
 
+type monitoredStreamRecord struct {
+	ConnectionID string    `json:"connectionId"`
+	Key          string    `json:"key"`
+	CreatedBy    string    `json:"createdBy,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
 type store struct {
 	db *sql.DB
 }
@@ -142,6 +149,57 @@ func (s *store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS access_logs_created_idx ON access_logs(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS access_logs_user_idx ON access_logs(user_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS monitored_streams (
+			connection_id TEXT NOT NULL,
+			stream_key TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(connection_id, stream_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS monitored_streams_connection_idx ON monitored_streams(connection_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS stream_metric_samples (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at TEXT NOT NULL,
+			connection_id TEXT NOT NULL,
+			stream_key TEXT NOT NULL,
+			entries INTEGER NOT NULL,
+			consumer_groups INTEGER NOT NULL,
+			consumer_count INTEGER NOT NULL DEFAULT 0,
+			total_lag INTEGER NOT NULL,
+			lag_known INTEGER NOT NULL,
+			pending INTEGER NOT NULL,
+			last_delivered_id TEXT NOT NULL,
+			consume_delay_ms INTEGER,
+			redis_latency_ms REAL NOT NULL,
+			published_total INTEGER NOT NULL DEFAULT 0,
+			consumed_total INTEGER NOT NULL DEFAULT 0,
+			publish_rate REAL,
+			consume_rate REAL,
+			lag_delta REAL
+		)`,
+		`CREATE INDEX IF NOT EXISTS stream_metric_samples_connection_time_idx
+			ON stream_metric_samples(connection_id, recorded_at)`,
+		`CREATE INDEX IF NOT EXISTS stream_metric_samples_stream_time_idx
+			ON stream_metric_samples(connection_id, stream_key, recorded_at)`,
+		`CREATE TABLE IF NOT EXISTS stream_metric_rollups (
+			recorded_at TEXT NOT NULL,
+			connection_id TEXT NOT NULL,
+			stream_key TEXT NOT NULL,
+			entries REAL NOT NULL,
+			consumer_groups REAL NOT NULL,
+			consumer_count REAL NOT NULL,
+			total_lag REAL NOT NULL,
+			lag_known INTEGER NOT NULL,
+			pending REAL NOT NULL,
+			consume_delay_ms REAL,
+			redis_latency_ms REAL NOT NULL,
+			publish_rate REAL,
+			consume_rate REAL,
+			lag_delta REAL,
+			PRIMARY KEY(connection_id, stream_key, recorded_at)
+		)`,
+		`CREATE INDEX IF NOT EXISTS stream_metric_rollups_connection_time_idx
+			ON stream_metric_rollups(connection_id, recorded_at)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -152,7 +210,88 @@ func (s *store) migrate(ctx context.Context) error {
 		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return fmt.Errorf("database migration: %w", err)
 	}
+	metricColumns := []string{
+		`ALTER TABLE stream_metric_samples ADD COLUMN consumer_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE stream_metric_samples ADD COLUMN published_total INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE stream_metric_samples ADD COLUMN consumed_total INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE stream_metric_samples ADD COLUMN publish_rate REAL`,
+		`ALTER TABLE stream_metric_samples ADD COLUMN consume_rate REAL`,
+		`ALTER TABLE stream_metric_samples ADD COLUMN lag_delta REAL`,
+	}
+	for _, statement := range metricColumns {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("database migration: %w", err)
+		}
+	}
 	return nil
+}
+
+func (s *store) listMonitoredStreams(ctx context.Context, connectionID string) ([]monitoredStreamRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT connection_id, stream_key, created_by, created_at
+		FROM monitored_streams
+		WHERE connection_id=?
+		ORDER BY created_at, stream_key
+	`, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]monitoredStreamRecord, 0)
+	for rows.Next() {
+		var item monitoredStreamRecord
+		var createdAt string
+		if err := rows.Scan(&item.ConnectionID, &item.Key, &item.CreatedBy, &createdAt); err != nil {
+			return nil, err
+		}
+		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *store) addMonitoredStream(ctx context.Context, connectionID, key, userID string) (monitoredStreamRecord, bool, error) {
+	createdAt := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO monitored_streams(connection_id, stream_key, created_by, created_at)
+		VALUES(?,?,?,?)
+		ON CONFLICT(connection_id, stream_key) DO NOTHING
+	`, connectionID, key, userID, createdAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return monitoredStreamRecord{}, false, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		return monitoredStreamRecord{
+			ConnectionID: connectionID,
+			Key:          key,
+			CreatedBy:    userID,
+			CreatedAt:    createdAt,
+		}, true, nil
+	}
+
+	var item monitoredStreamRecord
+	var storedAt string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT connection_id, stream_key, created_by, created_at
+		FROM monitored_streams
+		WHERE connection_id=? AND stream_key=?
+	`, connectionID, key).Scan(&item.ConnectionID, &item.Key, &item.CreatedBy, &storedAt); err != nil {
+		return monitoredStreamRecord{}, false, err
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, storedAt)
+	return item, false, nil
+}
+
+func (s *store) deleteMonitoredStream(ctx context.Context, connectionID, key string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM monitored_streams WHERE connection_id=? AND stream_key=?`, connectionID, key)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := result.RowsAffected()
+	return affected > 0, nil
 }
 
 func (s *store) hasUsers(ctx context.Context) (bool, error) {

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Clock3, Database, Gauge, ListChecks, RefreshCw, UsersRound } from "lucide-react";
+import { Activity, Clock3, Database, Gauge, ListChecks, Radio, RefreshCw, UsersRound } from "lucide-react";
 import { api } from "../api";
+import { MetricTimeSeriesChart, type MetricChartSeries } from "../components/MetricTimeSeriesChart";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
-import type { OverviewStreamItem, RedisConnection } from "../types";
+import type { OverviewStreamItem, RedisConnection, StreamMetricSeries } from "../types";
 
 type OverviewStream = OverviewStreamItem & {
   connectionId: string;
@@ -20,6 +21,13 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
   const [streams, setStreams] = useState<OverviewStream[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [metricConnectionId, setMetricConnectionId] = useState("");
+  const [metricStreamKey, setMetricStreamKey] = useState("");
+  const [metricRange, setMetricRange] = useState<StreamMetricSeries["range"]>("5m");
+  const [metricSeries, setMetricSeries] = useState<StreamMetricSeries | null>(null);
+  const [metricError, setMetricError] = useState("");
+  const [metricLoading, setMetricLoading] = useState(false);
+  const [liveMetrics, setLiveMetrics] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,8 +57,51 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
   }, [t]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!connections.length) {
+      setMetricConnectionId("");
+      return;
+    }
+    if (!connections.some((connection) => connection.id === metricConnectionId)) {
+      setMetricConnectionId(connections[0].id);
+    }
+  }, [connections, metricConnectionId]);
+
+  const monitoredStreams = useMemo(
+    () => streams.filter((stream) => stream.connectionId === metricConnectionId && stream.monitored && stream.available),
+    [metricConnectionId, streams],
+  );
+
+  useEffect(() => {
+    if (metricStreamKey && !monitoredStreams.some((stream) => stream.key === metricStreamKey)) {
+      setMetricStreamKey("");
+    }
+  }, [metricStreamKey, monitoredStreams]);
+
+  const loadMetrics = useCallback(async () => {
+    if (!metricConnectionId) return;
+    setMetricLoading(true);
+    try {
+      const response = await api.metrics(metricConnectionId, metricRange, metricStreamKey);
+      setMetricSeries(response);
+      setMetricError("");
+    } catch (cause) {
+      setMetricError(cause instanceof Error ? t(cause.message) : t("Unable to load stream metrics."));
+    } finally {
+      setMetricLoading(false);
+    }
+  }, [metricConnectionId, metricRange, metricStreamKey, t]);
+
+  useEffect(() => {
+    if (!metricConnectionId) return;
+    void loadMetrics();
+    if (!liveMetrics) return;
+    const timer = window.setInterval(() => void loadMetrics(), 1000);
+    return () => window.clearInterval(timer);
+  }, [liveMetrics, loadMetrics, metricConnectionId]);
 
   const totals = useMemo(() => {
+    let availableStreams = 0;
     let entries = 0;
     let consumerGroups = 0;
     let totalLag = 0;
@@ -58,6 +109,7 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
     let lagKnown = true;
     let lastConsumed = "";
     for (const stream of streams) {
+      if (stream.available) availableStreams += 1;
       entries += stream.length;
       consumerGroups += stream.consumerGroups;
       totalLag += stream.totalLag;
@@ -65,7 +117,7 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
       if (!stream.lagKnown) lagKnown = false;
       if (compareStreamIds(stream.lastConsumed, lastConsumed) > 0) lastConsumed = stream.lastConsumed;
     }
-    return { entries, consumerGroups, totalLag, pending, lagKnown, lastConsumed };
+    return { availableStreams, entries, consumerGroups, totalLag, pending, lagKnown, lastConsumed };
   }, [streams]);
   const streamColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "key", label: t("Key"), defaultWidth: 260, minWidth: 170, grow: true },
@@ -76,6 +128,76 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
     { id: "last-consumed", label: t("Last consumed"), defaultWidth: 200, minWidth: 150 },
     { id: "connection", label: t("Connection"), defaultWidth: 170, minWidth: 120 },
   ], [t]);
+  const pressureSeries = useMemo<MetricChartSeries[]>(() => [
+    {
+      id: "lag",
+      label: t("Total lag"),
+      description: t("Messages still waiting to be delivered across consumer groups."),
+      className: "metric-line-primary",
+      value: (point) => point.totalLag,
+      format: (value) => Math.round(value).toLocaleString(locale),
+    },
+    {
+      id: "pending",
+      label: t("Pending"),
+      description: t("Delivered messages that remain unacknowledged in the PEL."),
+      className: "metric-line-secondary",
+      value: (point) => point.pending,
+      format: (value) => Math.round(value).toLocaleString(locale),
+    },
+    {
+      id: "consumers",
+      label: t("Consumers"),
+      description: t("Consumers currently registered across the selected consumer groups."),
+      className: "metric-line-tertiary",
+      value: (point) => point.consumerCount,
+      format: (value) => Math.round(value).toLocaleString(locale),
+    },
+  ], [locale, t]);
+  const latencySeries = useMemo<MetricChartSeries[]>(() => [
+    {
+      id: "consume-delay",
+      label: t("Consume delay"),
+      description: t("Observed delivery time minus the publish time encoded in the Redis Stream ID."),
+      className: "metric-line-primary",
+      value: (point) => point.consumeDelayMs,
+      format: formatMilliseconds,
+    },
+    {
+      id: "redis-latency",
+      label: t("Redis response"),
+      description: t("Round-trip time for the collector's Redis PING."),
+      className: "metric-line-secondary",
+      value: (point) => point.redisLatencyMs,
+      format: formatMilliseconds,
+    },
+  ], [t]);
+  const rateSeries = useMemo<MetricChartSeries[]>(() => [
+    {
+      id: "publish-rate",
+      label: t("Published / s"),
+      description: t("Entries added per second. Uses entries-added when Redis exposes it."),
+      className: "metric-line-primary",
+      value: (point) => point.publishRate,
+      format: formatRate,
+    },
+    {
+      id: "consume-rate",
+      label: t("Consumed / s"),
+      description: t("Consumer group progress per second from entries-read."),
+      className: "metric-line-secondary",
+      value: (point) => point.consumeRate,
+      format: formatRate,
+    },
+    {
+      id: "lag-delta",
+      label: t("Lag change / s"),
+      description: t("Positive values mean backlog is growing; negative values mean it is draining."),
+      className: "metric-line-tertiary",
+      value: (point) => point.lagDelta,
+      format: formatSignedRate,
+    },
+  ], [t]);
 
   return (
     <div className="overview-page">
@@ -85,13 +207,44 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
       </div>
       {error ? <div className="page-error">{error}</div> : null}
       <div className="overview-metrics">
-        <div><span><Database size={15} />{t("Streams")}</span><strong>{streams.length.toLocaleString(locale)}</strong></div>
+        <div><span><Database size={15} />{t("Streams")}</span><strong>{totals.availableStreams.toLocaleString(locale)}</strong></div>
         <div><span><Activity size={15} />{t("Entries")}</span><strong>{totals.entries.toLocaleString(locale)}</strong></div>
         <div><span><UsersRound size={15} />{t("Consumer groups")}</span><strong>{totals.consumerGroups.toLocaleString(locale)}</strong></div>
         <div><span><Gauge size={15} />{t("Total lag")}</span><strong>{totals.lagKnown ? totals.totalLag.toLocaleString(locale) : "—"}</strong></div>
         <div><span><ListChecks size={15} />{t("Pending")}</span><strong>{totals.pending.toLocaleString(locale)}</strong></div>
         <div><span><Clock3 size={15} />{t("Last consumed")}</span><strong className="mono overview-last-consumed">{totals.lastConsumed || "—"}</strong></div>
       </div>
+      <section className="metric-history-panel">
+        <header className="metric-history-header">
+          <div><h2>{t("Stream performance")}</h2><span>{metricSeries ? t("{seconds}s samples", { seconds: metricSeries.intervalSeconds }) : t("Time series")}</span></div>
+          <div className="metric-history-controls">
+            {connections.length > 1 ? <select value={metricConnectionId} onChange={(event) => setMetricConnectionId(event.target.value)} aria-label={t("Metric connection")}>
+              {connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
+            </select> : null}
+            <select value={metricStreamKey} onChange={(event) => setMetricStreamKey(event.target.value)} aria-label={t("Metric stream")}>
+              <option value="">{t("All monitored streams")}</option>
+              {monitoredStreams.map((stream) => <option key={stream.key} value={stream.key}>{stream.key}</option>)}
+            </select>
+            <select value={metricRange} onChange={(event) => setMetricRange(event.target.value as StreamMetricSeries["range"])} aria-label={t("Time range")}>
+              <option value="1m">{t("Last minute")}</option>
+              <option value="5m">{t("Last 5 minutes")}</option>
+              <option value="15m">{t("Last 15 minutes")}</option>
+              <option value="1h">{t("Last hour")}</option>
+              <option value="6h">{t("Last 6 hours")}</option>
+              <option value="24h">{t("Last 24 hours")}</option>
+              <option value="7d">{t("Last 7 days")}</option>
+            </select>
+            <button type="button" className={liveMetrics ? "metric-live active" : "metric-live"} aria-pressed={liveMetrics} onClick={() => setLiveMetrics((current) => !current)}><Radio size={14} />{t("Live")}</button>
+            <button type="button" aria-label={t("Refresh metrics")} title={t("Refresh metrics")} disabled={metricLoading || !metricConnectionId} onClick={() => void loadMetrics()}><RefreshCw className={metricLoading ? "spin" : ""} size={14} /></button>
+          </div>
+        </header>
+        {metricError ? <div className="metric-history-error">{metricError}</div> : null}
+        <div className="metric-chart-grid">
+          <MetricTimeSeriesChart title={t("Consumer pressure")} points={metricSeries?.items ?? []} series={pressureSeries} />
+          <MetricTimeSeriesChart title={t("Latency")} points={metricSeries?.items ?? []} series={latencySeries} />
+          <MetricTimeSeriesChart title={t("Message rates")} points={metricSeries?.items ?? []} series={rateSeries} />
+        </div>
+      </section>
       <div className="overview-grid overview-grid--live">
         <section className="lag-panel">
           <div className="section-title"><h2>{t("Connection health")}</h2></div>
@@ -110,7 +263,7 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
           <ResizableGrid className="overview-stream-table" storageKey="overview-streams" columns={streamColumns} headerClassName="overview-stream-head">
             {streams.map((stream) => (
               <div className="overview-stream-row" key={`${stream.connectionId}:${stream.key}`}>
-                <strong className="mono">{stream.key}</strong>
+                <strong className="mono overview-stream-key">{stream.key}{!stream.available ? <em>{t("Waiting")}</em> : null}</strong>
                 <span>{stream.length.toLocaleString(locale)}</span>
                 <span>
                   <button
@@ -150,4 +303,20 @@ function compareStreamIds(left: string, right: string) {
   } catch {
     return left.localeCompare(right, undefined, { numeric: true });
   }
+}
+
+function formatMilliseconds(value: number) {
+  if (value < 1) return `${value.toFixed(2)} ms`;
+  if (value < 1000) return `${value.toFixed(value < 10 ? 1 : 0)} ms`;
+  if (value < 60000) return `${(value / 1000).toFixed(1)} s`;
+  return `${(value / 60000).toFixed(1)} min`;
+}
+
+function formatRate(value: number) {
+  return `${value.toFixed(value < 10 ? 2 : 1)} /s`;
+}
+
+function formatSignedRate(value: number) {
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(Math.abs(value) < 10 ? 2 : 1)} /s`;
 }

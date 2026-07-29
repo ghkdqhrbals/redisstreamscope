@@ -1,4 +1,4 @@
-import type { ApiSession, ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem } from "./types";
+import type { ApiSession, ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem, StreamMetricSeries } from "./types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -50,9 +50,32 @@ export const api = {
     request<{ connectionId: string; healthy: boolean; items: OverviewStreamItem[]; generatedAt: string }>(
       `/api/overview?connectionId=${encodeURIComponent(connectionId)}`,
     ),
+  metrics: (connectionId: string, range: StreamMetricSeries["range"], streamKey = "") =>
+    request<StreamMetricSeries>(
+      `/api/metrics/timeseries?connectionId=${encodeURIComponent(connectionId)}&range=${encodeURIComponent(range)}${streamKey ? `&streamKey=${encodeURIComponent(streamKey)}` : ""}`,
+    ),
   streams: (connectionId: string, cursor = 0, pattern?: string) =>
     request<{ items: StreamItem[]; nextCursor: number; hasMore: boolean }>(
       `/api/streams?connectionId=${encodeURIComponent(connectionId)}&cursor=${cursor}&limit=500${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ""}`,
+    ),
+  streamStatus: (connectionId: string, key: string) =>
+    request<{ key: string; available: boolean; exists: boolean; redisType: string }>(
+      `/api/monitored-streams/status?connectionId=${encodeURIComponent(connectionId)}&key=${encodeURIComponent(key)}`,
+    ),
+  monitorStream: (connectionId: string, key: string) =>
+    request<{
+      item: { connectionId: string; key: string; createdBy?: string; createdAt: string };
+      created: boolean;
+      available: boolean;
+      redisType: string;
+    }>(
+      `/api/monitored-streams?connectionId=${encodeURIComponent(connectionId)}&key=${encodeURIComponent(key)}`,
+      { method: "POST", body: "{}" },
+    ),
+  unmonitorStream: (connectionId: string, key: string) =>
+    request<{ ok: boolean }>(
+      `/api/monitored-streams?connectionId=${encodeURIComponent(connectionId)}&key=${encodeURIComponent(key)}`,
+      { method: "DELETE", body: "{}" },
     ),
   entries: (connectionId: string, key: string, limit = 100, start = "+") =>
     request<{ items: RedisEntry[]; nextCursor: string; hasMore: boolean }>(

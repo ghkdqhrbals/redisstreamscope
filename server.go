@@ -106,7 +106,11 @@ func (s *apiServer) routes() {
 
 	s.mux.Handle("GET /api/connections", s.protect("connections:read", s.connections))
 	s.mux.Handle("GET /api/overview", s.protect("streams:read", s.overview))
+	s.mux.Handle("GET /api/metrics/timeseries", s.protect("streams:read", s.metricSeries))
 	s.mux.Handle("GET /api/streams", s.protect("streams:read", s.streams))
+	s.mux.Handle("GET /api/monitored-streams/status", s.protect("streams:read", s.monitoredStreamStatus))
+	s.mux.Handle("POST /api/monitored-streams", s.protect("streams:write", s.addMonitoredStream))
+	s.mux.Handle("DELETE /api/monitored-streams", s.protect("streams:write", s.deleteMonitoredStream))
 	s.mux.Handle("GET /api/entries", s.protect("streams:read", s.entries))
 	s.mux.Handle("GET /api/groups", s.protect("groups:read", s.groups))
 	s.mux.Handle("GET /api/consumers", s.protect("groups:read", s.consumers))
@@ -578,7 +582,12 @@ func (s *apiServer) overview(writer http.ResponseWriter, request *http.Request) 
 		writeRedisError(writer, err)
 		return
 	}
-	items, err := collectOverviewStreams(ctx, connection.client, connection.config.KeyPattern, s.config.MaxPageSize)
+	monitored, err := s.store.listMonitoredStreams(ctx, connection.config.ID)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "monitored_streams_failed", "unable to load monitored streams")
+		return
+	}
+	items, err := collectOverviewStreams(ctx, connection.client, connection.config.KeyPattern, s.config.MaxPageSize, monitored)
 	if err != nil {
 		writeRedisError(writer, err)
 		return
@@ -597,13 +606,22 @@ type overviewStream struct {
 	LagKnown       bool   `json:"lagKnown"`
 	Pending        int64  `json:"pending"`
 	LastConsumed   string `json:"lastConsumed"`
+	Monitored      bool   `json:"monitored"`
+	Available      bool   `json:"available"`
+	RedisType      string `json:"redisType"`
 }
 
 type overviewPipelineClient interface {
 	Pipelined(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
-func collectOverviewStreams(ctx context.Context, client redis.UniversalClient, pattern string, scanCount int64) ([]overviewStream, error) {
+func collectOverviewStreams(
+	ctx context.Context,
+	client redis.UniversalClient,
+	pattern string,
+	scanCount int64,
+	monitored []monitoredStreamRecord,
+) ([]overviewStream, error) {
 	if pattern == "" {
 		pattern = "*"
 	}
@@ -634,7 +652,45 @@ func collectOverviewStreams(ctx context.Context, client redis.UniversalClient, p
 			break
 		}
 	}
-	sort.Slice(items, func(left, right int) bool { return items[left].Key < items[right].Key })
+	indexByKey := make(map[string]int, len(items))
+	for index := range items {
+		indexByKey[items[index].Key] = index
+	}
+	for _, saved := range monitored {
+		if index, exists := indexByKey[saved.Key]; exists {
+			items[index].Monitored = true
+			continue
+		}
+		redisType, err := client.Type(ctx, saved.Key).Result()
+		if err != nil {
+			return nil, err
+		}
+		if redisType == "stream" {
+			batch, err := collectOverviewBatch(ctx, client, pipelineClient, canPipeline, []string{saved.Key})
+			if err != nil {
+				return nil, err
+			}
+			if len(batch) > 0 {
+				batch[0].Monitored = true
+				indexByKey[saved.Key] = len(items)
+				items = append(items, batch[0])
+				continue
+			}
+		}
+		indexByKey[saved.Key] = len(items)
+		items = append(items, overviewStream{
+			Key: saved.Key, Monitored: true, Available: false, RedisType: redisType, LagKnown: true,
+		})
+	}
+	sort.Slice(items, func(left, right int) bool {
+		if items[left].Available != items[right].Available {
+			return items[left].Available
+		}
+		if items[left].Monitored != items[right].Monitored {
+			return items[left].Monitored
+		}
+		return items[left].Key < items[right].Key
+	})
 	return items, nil
 }
 
@@ -683,6 +739,7 @@ func collectOverviewBatch(
 		items = append(items, overviewStream{
 			Key: key, Length: length, ConsumerGroups: groupCount,
 			TotalLag: totalLag, LagKnown: lagKnown, Pending: pending, LastConsumed: lastConsumed,
+			Available: true, RedisType: "stream",
 		})
 	}
 	return items, nil
@@ -763,14 +820,159 @@ func (s *apiServer) streams(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadGateway, "redis_response", err.Error())
 		return
 	}
-	items := make([]map[string]any, 0, len(keys))
-	for _, key := range keys {
-		length, lengthErr := connection.client.XLen(request.Context(), key).Result()
-		if lengthErr == nil {
-			items = append(items, map[string]any{"key": key, "length": length})
+	monitored, err := s.store.listMonitoredStreams(request.Context(), connection.config.ID)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "monitored_streams_failed", "unable to load monitored streams")
+		return
+	}
+	monitoredKeys := make(map[string]struct{}, len(monitored))
+	for _, item := range monitored {
+		monitoredKeys[item.Key] = struct{}{}
+	}
+	if cursor == 0 {
+		discovered := make(map[string]struct{}, len(keys))
+		for _, key := range keys {
+			discovered[key] = struct{}{}
+		}
+		for _, item := range monitored {
+			if _, exists := discovered[item.Key]; !exists {
+				keys = append(keys, item.Key)
+			}
 		}
 	}
+	items := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		_, isMonitored := monitoredKeys[key]
+		redisType := "stream"
+		available := true
+		if isMonitored {
+			redisType, err = connection.client.Type(request.Context(), key).Result()
+			if err != nil {
+				writeRedisError(writer, err)
+				return
+			}
+			available = redisType == "stream"
+		}
+		if !available {
+			items = append(items, map[string]any{
+				"key": key, "length": int64(0), "monitored": true, "available": false, "redisType": redisType,
+			})
+			continue
+		}
+		length, lengthErr := connection.client.XLen(request.Context(), key).Result()
+		if lengthErr == nil {
+			items = append(items, map[string]any{
+				"key": key, "length": length, "monitored": isMonitored, "available": true, "redisType": "stream",
+			})
+		}
+	}
+	sort.SliceStable(items, func(left, right int) bool {
+		leftAvailable, _ := items[left]["available"].(bool)
+		rightAvailable, _ := items[right]["available"].(bool)
+		if leftAvailable != rightAvailable {
+			return leftAvailable
+		}
+		leftMonitored, _ := items[left]["monitored"].(bool)
+		rightMonitored, _ := items[right]["monitored"].(bool)
+		if leftMonitored != rightMonitored {
+			return leftMonitored
+		}
+		return items[left]["key"].(string) < items[right]["key"].(string)
+	})
 	writeJSON(writer, http.StatusOK, map[string]any{"items": items, "nextCursor": next, "hasMore": next != 0})
+}
+
+func (s *apiServer) addMonitoredStream(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	key, err := validateMonitoredStreamKey(request.URL.Query().Get("key"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_stream_key", err.Error())
+		return
+	}
+	redisType, err := connection.client.Type(request.Context(), key).Result()
+	if err != nil {
+		writeRedisError(writer, err)
+		return
+	}
+	if redisType != "none" && redisType != "stream" {
+		writeError(writer, http.StatusConflict, "key_not_stream", fmt.Sprintf("%q is a Redis %s key, not a stream", key, redisType))
+		return
+	}
+	session, _ := request.Context().Value(sessionContextKey).(sessionRecord)
+	item, created, err := s.store.addMonitoredStream(request.Context(), connection.config.ID, key, session.UserID)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "monitor_stream_failed", "unable to save the monitored stream")
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, map[string]any{
+		"item": item, "created": created, "available": redisType == "stream", "redisType": redisType,
+	})
+}
+
+func (s *apiServer) monitoredStreamStatus(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	key, err := validateMonitoredStreamKey(request.URL.Query().Get("key"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_stream_key", err.Error())
+		return
+	}
+	redisType, err := connection.client.Type(request.Context(), key).Result()
+	if err != nil {
+		writeRedisError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"key": key, "available": redisType == "stream", "exists": redisType != "none", "redisType": redisType,
+	})
+}
+
+func (s *apiServer) deleteMonitoredStream(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	key, err := validateMonitoredStreamKey(request.URL.Query().Get("key"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_stream_key", err.Error())
+		return
+	}
+	deleted, err := s.store.deleteMonitoredStream(request.Context(), connection.config.ID, key)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "unmonitor_stream_failed", "unable to remove the monitored stream")
+		return
+	}
+	if !deleted {
+		writeError(writer, http.StatusNotFound, "monitored_stream_not_found", "monitored stream was not found")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"ok": true})
+}
+
+func validateMonitoredStreamKey(value string) (string, error) {
+	key := strings.TrimSpace(value)
+	if key == "" {
+		return "", errors.New("stream key is required")
+	}
+	if len([]byte(key)) > 1024 {
+		return "", errors.New("stream key must be 1024 bytes or fewer")
+	}
+	if strings.ContainsRune(key, '\x00') {
+		return "", errors.New("stream key cannot contain a null character")
+	}
+	return key, nil
 }
 
 func (s *apiServer) entries(writer http.ResponseWriter, request *http.Request) {

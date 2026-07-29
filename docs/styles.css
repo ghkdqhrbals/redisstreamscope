@@ -446,6 +446,42 @@ h3 {
   font-weight: 650;
 }
 
+.technology-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.technology-grid article {
+  min-height: 180px;
+  padding: 28px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.technology-grid span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.technology-grid strong {
+  margin-top: auto;
+  font-size: 24px;
+  letter-spacing: -0.035em;
+}
+
+.technology-grid p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .steps {
   border-top: 1px solid var(--border-strong);
 }
@@ -529,6 +565,44 @@ h3 {
   border-top: 1px solid var(--border);
 }
 
+.release-card {
+  min-height: 118px;
+  padding: 24px 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  background: var(--surface);
+}
+
+.release-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.release-card span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.release-card strong {
+  font-size: 28px;
+  letter-spacing: -0.04em;
+}
+
+.release-card code {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
 .documentation-links a {
   min-height: 62px;
   padding: 0 4px;
@@ -582,6 +656,10 @@ footer span:first-child {
 
   .configuration-grid article {
     min-height: 0;
+  }
+
+  .technology-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -655,6 +733,24 @@ footer span:first-child {
   .host-note {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .technology-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .technology-grid article {
+    min-height: 150px;
+  }
+
+  .release-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .release-card code {
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   footer {

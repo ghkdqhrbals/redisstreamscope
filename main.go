@@ -60,6 +60,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("create server: %v", err)
 	}
+	metricsContext, stopMetrics := context.WithCancel(context.Background())
+	metricsDone := server.startMetricCollection(metricsContext)
 	httpServer := &http.Server{
 		Addr:              config.Addr,
 		Handler:           server,
@@ -82,7 +84,12 @@ func main() {
 	<-stop
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	stopMetrics()
 	_ = httpServer.Shutdown(ctx)
+	select {
+	case <-metricsDone:
+	case <-ctx.Done():
+	}
 }
 
 func ensureDefaultAdmin(store *store) error {
