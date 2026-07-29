@@ -43,6 +43,11 @@ func TestRedisVersionCompatibility(t *testing.T) {
 	if expectedSeries != "" && actualVersion != expectedSeries && !strings.HasPrefix(actualVersion, expectedSeries+".") {
 		t.Fatalf("Redis version %q does not match expected series %q", actualVersion, expectedSeries)
 	}
+	if versionFile := strings.TrimSpace(os.Getenv("REDIS_TEST_VERSION_FILE")); versionFile != "" {
+		if err := os.WriteFile(versionFile, []byte(actualVersion+"\n"), 0o600); err != nil {
+			t.Fatalf("write Redis version result: %v", err)
+		}
+	}
 	t.Logf("running StreamScope compatibility suite against Redis %s", actualVersion)
 
 	prefix := fmt.Sprintf("streamscope:compat:%d", time.Now().UnixNano())

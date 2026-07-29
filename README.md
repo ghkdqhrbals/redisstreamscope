@@ -107,3 +107,22 @@ Use only one of `REDIS_HOST`, `REDIS_NODES`, or `REDIS_URL`. See the commented [
 ```sh
 docker build -t streamscope:local .
 ```
+
+## Container releases
+
+Container releases are created from the [Release container image](https://github.com/ghkdqhrbals/streamscope/actions/workflows/release.yml) workflow:
+
+1. Select **Run workflow** on the `main` branch.
+2. Choose `patch`, `minor`, or `major`.
+3. Start the workflow.
+
+The workflow calculates the next semantic version, runs the application tests, builds `linux/amd64` and `linux/arm64` images, publishes them to GHCR, and creates the matching Git tag and GitHub Release.
+
+For a `1.4.2` release, these image tags are published:
+
+| Tag | Update policy |
+| --- | --- |
+| `1.4.2` | Immutable patch release |
+| `1.4` | Latest patch in the minor version |
+| `1` | Latest release in the major version |
+| `latest` | Latest StreamScope release |
