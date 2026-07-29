@@ -116,7 +116,7 @@ Container releases are created from the [Release container image](https://github
 2. Choose `patch`, `minor`, or `major`.
 3. Start the workflow.
 
-The workflow calculates the next semantic version, runs the application tests, builds `linux/amd64` and `linux/arm64` images, publishes them to GHCR, and creates the matching Git tag and GitHub Release.
+The workflow calculates the next semantic version and updates `VERSION`, `package.json`, and `package-lock.json`. After the tests pass, it builds `linux/amd64` and `linux/arm64` images, publishes them to GHCR, pushes the `Release vX.Y.Z` version commit and Git tag, and creates the matching GitHub Release. The released version is also embedded in the container and returned by `GET /health/live`.
 
 For a `1.4.2` release, these image tags are published:
 
