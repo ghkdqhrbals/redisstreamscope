@@ -21,6 +21,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVer
     && chown 65532:65532 /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.source="https://github.com/ghkdqhrbals/streamscope" \
+      org.opencontainers.image.title="StreamScope" \
+      org.opencontainers.image.description="Redis Streams operations console"
 WORKDIR /app
 COPY --from=go-builder --chown=65532:65532 /out/streamscope /app/streamscope
 COPY --from=go-builder --chown=65532:65532 /out/data /data
