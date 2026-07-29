@@ -5,12 +5,18 @@ import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
 import { useI18n } from "../i18n";
 import type { ConsumerGroup, ConsumerInfo, PendingEntry, RedisConnection, StreamItem, ToastState } from "../types";
 
-export function GroupsView({ onToast }: { onToast: (toast: ToastState) => void }) {
+type GroupsViewProps = {
+  initialConnectionId?: string;
+  initialStreamKey?: string;
+  onToast: (toast: ToastState) => void;
+};
+
+export function GroupsView({ initialConnectionId = "", initialStreamKey = "", onToast }: GroupsViewProps) {
   const { t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
-  const [connectionId, setConnectionId] = useState("");
+  const [connectionId, setConnectionId] = useState(initialConnectionId);
   const [streams, setStreams] = useState<StreamItem[]>([]);
-  const [key, setKey] = useState("");
+  const [key, setKey] = useState(initialStreamKey);
   const [groups, setGroups] = useState<ConsumerGroup[]>([]);
   const [groupName, setGroupName] = useState("");
   const [consumers, setConsumers] = useState<ConsumerInfo[]>([]);

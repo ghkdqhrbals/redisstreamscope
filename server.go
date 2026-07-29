@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -571,13 +572,173 @@ func (s *apiServer) overview(writer http.ResponseWriter, request *http.Request) 
 		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
-	pongErr := connection.client.Ping(ctx).Err()
+	if err := connection.client.Ping(ctx).Err(); err != nil {
+		writeRedisError(writer, err)
+		return
+	}
+	items, err := collectOverviewStreams(ctx, connection.client, connection.config.KeyPattern, s.config.MaxPageSize)
+	if err != nil {
+		writeRedisError(writer, err)
+		return
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"connectionId": connection.config.ID, "healthy": pongErr == nil, "streams": nil,
+		"connectionId": connection.config.ID, "healthy": true, "items": items,
 		"generatedAt": time.Now().UTC(),
 	})
+}
+
+type overviewStream struct {
+	Key            string `json:"key"`
+	Length         int64  `json:"length"`
+	ConsumerGroups int    `json:"consumerGroups"`
+	TotalLag       int64  `json:"totalLag"`
+	LagKnown       bool   `json:"lagKnown"`
+	Pending        int64  `json:"pending"`
+	LastConsumed   string `json:"lastConsumed"`
+}
+
+type overviewPipelineClient interface {
+	Pipelined(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
+}
+
+func collectOverviewStreams(ctx context.Context, client redis.UniversalClient, pattern string, scanCount int64) ([]overviewStream, error) {
+	if pattern == "" {
+		pattern = "*"
+	}
+	if scanCount < 1 {
+		scanCount = 500
+	}
+	pipelineClient, canPipeline := client.(overviewPipelineClient)
+	items := make([]overviewStream, 0)
+	var cursor uint64
+	for {
+		result, err := client.Do(ctx, "SCAN", cursor, "MATCH", pattern, "COUNT", scanCount, "TYPE", "stream").Result()
+		if err != nil {
+			return nil, err
+		}
+		next, keys, err := parseScan(result)
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) > 0 {
+			batch, err := collectOverviewBatch(ctx, client, pipelineClient, canPipeline, keys)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, batch...)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	sort.Slice(items, func(left, right int) bool { return items[left].Key < items[right].Key })
+	return items, nil
+}
+
+func collectOverviewBatch(
+	ctx context.Context,
+	client redis.UniversalClient,
+	pipelineClient overviewPipelineClient,
+	canPipeline bool,
+	keys []string,
+) ([]overviewStream, error) {
+	lengthCommands := make([]*redis.IntCmd, len(keys))
+	groupCommands := make([]*redis.XInfoGroupsCmd, len(keys))
+	if canPipeline {
+		_, _ = pipelineClient.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for index, key := range keys {
+				lengthCommands[index] = pipe.XLen(ctx, key)
+				groupCommands[index] = pipe.XInfoGroups(ctx, key)
+			}
+			return nil
+		})
+	} else {
+		for index, key := range keys {
+			lengthCommands[index] = client.XLen(ctx, key)
+			groupCommands[index] = client.XInfoGroups(ctx, key)
+		}
+	}
+
+	items := make([]overviewStream, 0, len(keys))
+	for index, key := range keys {
+		length, err := lengthCommands[index].Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			return nil, err
+		}
+		groups, err := groupCommands[index].Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				groups = nil
+			} else {
+				return nil, err
+			}
+		}
+		groupCount, totalLag, lagKnown, pending, lastConsumed := summarizeOverviewGroups(groups)
+		items = append(items, overviewStream{
+			Key: key, Length: length, ConsumerGroups: groupCount,
+			TotalLag: totalLag, LagKnown: lagKnown, Pending: pending, LastConsumed: lastConsumed,
+		})
+	}
+	return items, nil
+}
+
+func summarizeOverviewGroups(groups []redis.XInfoGroup) (int, int64, bool, int64, string) {
+	totalLag := int64(0)
+	pending := int64(0)
+	lagKnown := true
+	lastConsumed := ""
+	for _, group := range groups {
+		pending += group.Pending
+		if group.Lag < 0 {
+			lagKnown = false
+		} else {
+			totalLag += group.Lag
+		}
+		if compareStreamIDs(group.LastDeliveredID, lastConsumed) > 0 {
+			lastConsumed = group.LastDeliveredID
+		}
+	}
+	return len(groups), totalLag, lagKnown, pending, lastConsumed
+}
+
+func compareStreamIDs(left, right string) int {
+	if left == right {
+		return 0
+	}
+	leftParts := strings.SplitN(left, "-", 2)
+	rightParts := strings.SplitN(right, "-", 2)
+	leftTime, leftTimeErr := strconv.ParseUint(leftParts[0], 10, 64)
+	rightTime, rightTimeErr := strconv.ParseUint(rightParts[0], 10, 64)
+	if leftTimeErr == nil && rightTimeErr == nil {
+		if leftTime != rightTime {
+			if leftTime < rightTime {
+				return -1
+			}
+			return 1
+		}
+		leftSequence := uint64(0)
+		rightSequence := uint64(0)
+		if len(leftParts) > 1 {
+			leftSequence, _ = strconv.ParseUint(leftParts[1], 10, 64)
+		}
+		if len(rightParts) > 1 {
+			rightSequence, _ = strconv.ParseUint(rightParts[1], 10, 64)
+		}
+		if leftSequence < rightSequence {
+			return -1
+		}
+		if leftSequence > rightSequence {
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(left, right)
 }
 
 func (s *apiServer) streams(writer http.ResponseWriter, request *http.Request) {

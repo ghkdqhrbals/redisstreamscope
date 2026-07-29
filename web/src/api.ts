@@ -1,4 +1,4 @@
-import type { ApiSession, ConsumerGroup, ConsumerInfo, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem } from "./types";
+import type { ApiSession, ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem } from "./types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -46,6 +46,10 @@ export const api = {
   testRedis: (connection: RedisConnectionConfig) =>
     request<{ ok: boolean; latencyMs: number }>("/api/settings/test-redis", { method: "POST", body: JSON.stringify(connection) }),
   connections: () => request<{ items: RedisConnection[] }>("/api/connections"),
+  overview: (connectionId: string) =>
+    request<{ connectionId: string; healthy: boolean; items: OverviewStreamItem[]; generatedAt: string }>(
+      `/api/overview?connectionId=${encodeURIComponent(connectionId)}`,
+    ),
   streams: (connectionId: string, cursor = 0, pattern?: string) =>
     request<{ items: StreamItem[]; nextCursor: number; hasMore: boolean }>(
       `/api/streams?connectionId=${encodeURIComponent(connectionId)}&cursor=${cursor}&limit=500${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ""}`,

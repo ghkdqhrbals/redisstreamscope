@@ -5,6 +5,14 @@ export type StreamItem = {
   length: number;
 };
 
+export type OverviewStreamItem = StreamItem & {
+  consumerGroups: number;
+  totalLag: number;
+  lagKnown: boolean;
+  pending: number;
+  lastConsumed: string;
+};
+
 export type RedisConnection = {
   id: string;
   name: string;
