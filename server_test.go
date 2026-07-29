@@ -121,6 +121,39 @@ func TestXAddArgsSupportMaxLenModes(t *testing.T) {
 	}
 }
 
+func TestSummarizeOverviewGroups(t *testing.T) {
+	groups := []redis.XInfoGroup{
+		{Name: "orders", Pending: 3, Lag: 7, LastDeliveredID: "1722235000000-4"},
+		{Name: "billing", Pending: 2, Lag: 5, LastDeliveredID: "1722235000001-0"},
+	}
+	count, lag, lagKnown, pending, lastConsumed := summarizeOverviewGroups(groups)
+	if count != 2 || lag != 12 || !lagKnown || pending != 5 || lastConsumed != "1722235000001-0" {
+		t.Fatalf(
+			"unexpected overview summary: count=%d lag=%d lagKnown=%v pending=%d lastConsumed=%q",
+			count, lag, lagKnown, pending, lastConsumed,
+		)
+	}
+}
+
+func TestSummarizeOverviewGroupsMarksUnsupportedLag(t *testing.T) {
+	groups := []redis.XInfoGroup{
+		{Name: "legacy", Pending: 1, Lag: -1, LastDeliveredID: "9-1"},
+	}
+	_, lag, lagKnown, _, _ := summarizeOverviewGroups(groups)
+	if lag != 0 || lagKnown {
+		t.Fatalf("expected unknown lag, got lag=%d lagKnown=%v", lag, lagKnown)
+	}
+}
+
+func TestCompareStreamIDsUsesSequence(t *testing.T) {
+	if compareStreamIDs("1722235000000-10", "1722235000000-9") <= 0 {
+		t.Fatal("expected the larger sequence number to be newer")
+	}
+	if compareStreamIDs("1722235000001-0", "1722235000000-999") <= 0 {
+		t.Fatal("expected the larger millisecond component to be newer")
+	}
+}
+
 func TestStatusWriterExposesStreamingControls(t *testing.T) {
 	underlying := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder(), deadline: time.Now()}
 	writer := &statusWriter{ResponseWriter: underlying, status: http.StatusOK}

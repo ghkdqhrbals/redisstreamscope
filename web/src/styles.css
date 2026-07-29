@@ -2100,3 +2100,131 @@ body.inspector-resizing * { cursor: col-resize !important; user-select: none !im
 #root .access-summary strong {
   font-size: var(--font-heading) !important;
 }
+
+/* User-adjustable message columns */
+.message-table-head,
+.message-row {
+  grid-template-columns: var(--message-columns, 180px 205px 420px 95px 90px);
+}
+.message-header-cell {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  border-right: 1px solid var(--border);
+}
+.message-header-cell:last-child { border-right: 0; }
+.message-header-cell > button,
+.message-header-cell > span:not(.column-resize-handle) {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0 14px 0 11px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.message-header-cell > button:hover { background: #eef0f2; color: var(--text); }
+.message-header-cell:last-child > button { justify-content: center; }
+.column-resize-handle {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  outline: 0;
+}
+.column-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  bottom: 8px;
+  width: 1px;
+  background: transparent;
+}
+.column-resize-handle:hover::after,
+.column-resize-handle:focus-visible::after { background: #111318; }
+body.column-resizing,
+body.column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* Overview stream operations summary */
+.overview-metrics {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: var(--border);
+}
+.overview-metrics > div {
+  min-width: 0;
+  border: 0;
+  background: #fff;
+}
+.overview-last-consumed {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-stream-table {
+  width: 100%;
+  overflow-x: auto;
+}
+.overview-stream-head,
+.overview-stream-row {
+  min-width: 1110px;
+  grid-template-columns:
+    minmax(220px, 1.5fr)
+    minmax(90px, .55fr)
+    minmax(130px, .7fr)
+    minmax(100px, .55fr)
+    minmax(100px, .55fr)
+    minmax(175px, .9fr)
+    minmax(150px, .8fr);
+}
+.overview-stream-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-group-link {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid #c8ccd2;
+  border-radius: 5px;
+  background: #fff;
+  color: #111318;
+  font-weight: 650;
+  cursor: pointer;
+}
+.overview-group-link:hover:not(:disabled) {
+  border-color: #111318;
+  background: #111318;
+  color: #fff;
+}
+.overview-group-link:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+@media (max-width: 1200px) {
+  .overview-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

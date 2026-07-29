@@ -1,4 +1,15 @@
-import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  FormEvent,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ArrowDownUp,
   ChevronLeft,
@@ -26,6 +37,24 @@ type StreamsViewProps = {
 };
 
 type MessageSortKey = "id" | "timestamp" | "size" | "fields";
+type MessageColumnKey = "id" | "timestamp" | "payload" | "size" | "fields";
+
+const MESSAGE_COLUMN_STORAGE_KEY = "streamscope:message-columns:v1";
+const MESSAGE_COLUMN_ORDER: MessageColumnKey[] = ["id", "timestamp", "payload", "size", "fields"];
+const DEFAULT_MESSAGE_COLUMN_WIDTHS: Record<MessageColumnKey, number> = {
+  id: 180,
+  timestamp: 205,
+  payload: 420,
+  size: 95,
+  fields: 90,
+};
+const MIN_MESSAGE_COLUMN_WIDTHS: Record<MessageColumnKey, number> = {
+  id: 130,
+  timestamp: 160,
+  payload: 220,
+  size: 80,
+  fields: 80,
+};
 
 export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast }: StreamsViewProps) {
   const { locale, t } = useI18n();
@@ -43,6 +72,7 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   const [streamQuery, setStreamQuery] = useState("");
   const [search, setSearch] = useState("");
   const [messageSort, setMessageSort] = useState<{ key: MessageSortKey; direction: "asc" | "desc" }>({ key: "id", direction: "desc" });
+  const [messageColumnWidths, setMessageColumnWidths] = useState<Record<MessageColumnKey, number>>(loadMessageColumnWidths);
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"idle" | "connecting" | "live" | "reconnecting">("idle");
   const [paused, setPaused] = useState(false);
@@ -106,6 +136,10 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   }, [connectionId, key, loadEntriesAndGroups, onSelectedStreamChange, selectedStreamKey, t]);
 
   useEffect(() => { void load(); }, []); // Initial discovery only.
+
+  useEffect(() => {
+    window.localStorage.setItem(MESSAGE_COLUMN_STORAGE_KEY, JSON.stringify(messageColumnWidths));
+  }, [messageColumnWidths]);
 
   useEffect(() => {
     if (!live || paused || !connectionId || !key) {
@@ -207,6 +241,42 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
       ? { key: nextKey, direction: current.direction === "asc" ? "desc" : "asc" }
       : { key: nextKey, direction: "desc" });
   };
+
+  const beginColumnResize = (event: ReactPointerEvent<HTMLSpanElement>, column: MessageColumnKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = messageColumnWidths[column];
+    document.body.classList.add("column-resizing");
+    const resize = (moveEvent: PointerEvent) => {
+      const width = Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], startWidth + moveEvent.clientX - startX);
+      setMessageColumnWidths((current) => current[column] === width ? current : { ...current, [column]: width });
+    };
+    const finish = () => {
+      document.body.classList.remove("column-resizing");
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+  };
+
+  const resizeColumnWithKeyboard = (event: KeyboardEvent<HTMLSpanElement>, column: MessageColumnKey) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const change = event.key === "ArrowLeft" ? -16 : 16;
+    setMessageColumnWidths((current) => ({
+      ...current,
+      [column]: Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], current[column] + change),
+    }));
+  };
+
+  const messageGridStyle = useMemo(() => ({
+    "--message-columns": MESSAGE_COLUMN_ORDER.map((column) => `${messageColumnWidths[column]}px`).join(" "),
+    minWidth: `${MESSAGE_COLUMN_ORDER.reduce((total, column) => total + messageColumnWidths[column], 0)}px`,
+  } as CSSProperties), [messageColumnWidths]);
 
   const loadMoreStreams = async () => {
     if (!connectionId || !hasMoreStreams || loadingMoreStreams) return;
@@ -317,13 +387,23 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
             {live ? <span className={`live-state live-state--${liveStatus}`}><Radio size={12} />{liveLabel}</span> : null}
           </div>
           <div className="message-table-scroll">
-            <div className="message-table">
+            <div className="message-table" style={messageGridStyle}>
               <div className="message-table-head">
-                <button className={messageSort.key === "id" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("id")}>ID <ArrowDownUp size={13} /></button>
-                <button className={messageSort.key === "timestamp" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("timestamp")}>{t("Timestamp")} <ArrowDownUp size={13} /></button>
-                <span>{t("Payload preview")}</span>
-                <button className={messageSort.key === "size" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("size")}>{t("Size")} <ArrowDownUp size={13} /></button>
-                <button className={messageSort.key === "fields" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("fields")}>{t("Fields")} <ArrowDownUp size={13} /></button>
+                <MessageHeaderCell column="id" label="ID" onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, id: DEFAULT_MESSAGE_COLUMN_WIDTHS.id }))}>
+                  <button className={messageSort.key === "id" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("id")}>ID <ArrowDownUp size={13} /></button>
+                </MessageHeaderCell>
+                <MessageHeaderCell column="timestamp" label={t("Timestamp")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, timestamp: DEFAULT_MESSAGE_COLUMN_WIDTHS.timestamp }))}>
+                  <button className={messageSort.key === "timestamp" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("timestamp")}>{t("Timestamp")} <ArrowDownUp size={13} /></button>
+                </MessageHeaderCell>
+                <MessageHeaderCell column="payload" label={t("Payload preview")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, payload: DEFAULT_MESSAGE_COLUMN_WIDTHS.payload }))}>
+                  <span>{t("Payload preview")}</span>
+                </MessageHeaderCell>
+                <MessageHeaderCell column="size" label={t("Size")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, size: DEFAULT_MESSAGE_COLUMN_WIDTHS.size }))}>
+                  <button className={messageSort.key === "size" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("size")}>{t("Size")} <ArrowDownUp size={13} /></button>
+                </MessageHeaderCell>
+                <MessageHeaderCell column="fields" label={t("Fields")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, fields: DEFAULT_MESSAGE_COLUMN_WIDTHS.fields }))}>
+                  <button className={messageSort.key === "fields" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("fields")}>{t("Fields")} <ArrowDownUp size={13} /></button>
+                </MessageHeaderCell>
               </div>
               <div className="message-table-body">
               {displayedEntries.map((entry) => <button className={`message-row ${entry.id === selectedId && tab === "messages" ? "selected" : ""}`} key={entry.id} onClick={() => { setSelectedId(entry.id); setTab("messages"); }}>
@@ -364,6 +444,37 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
       }} /> : null}
     </div>
   );
+}
+
+function MessageHeaderCell({
+  column,
+  label,
+  children,
+  onPointerDown,
+  onKeyDown,
+  onReset,
+}: {
+  column: MessageColumnKey;
+  label: string;
+  children: ReactNode;
+  onPointerDown: (event: ReactPointerEvent<HTMLSpanElement>, column: MessageColumnKey) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLSpanElement>, column: MessageColumnKey) => void;
+  onReset: () => void;
+}) {
+  const { t } = useI18n();
+  return <div className="message-header-cell">
+    {children}
+    <span
+      className="column-resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t("Resize {column} column", { column: label })}
+      tabIndex={0}
+      onPointerDown={(event) => onPointerDown(event, column)}
+      onKeyDown={(event) => onKeyDown(event, column)}
+      onDoubleClick={onReset}
+    />
+  </div>;
 }
 
 function ConsumerGroupInspector({
@@ -503,6 +614,18 @@ function formatTimestamp(value: string, locale: string) {
 
 function entrySize(entry: RedisEntry) {
   return new Blob([JSON.stringify(entry.fields)]).size;
+}
+
+function loadMessageColumnWidths(): Record<MessageColumnKey, number> {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(MESSAGE_COLUMN_STORAGE_KEY) ?? "{}") as Partial<Record<MessageColumnKey, number>>;
+    return Object.fromEntries(MESSAGE_COLUMN_ORDER.map((column) => [
+      column,
+      Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], Number(saved[column]) || DEFAULT_MESSAGE_COLUMN_WIDTHS[column]),
+    ])) as Record<MessageColumnKey, number>;
+  } catch {
+    return { ...DEFAULT_MESSAGE_COLUMN_WIDTHS };
+  }
 }
 
 function compareStreamIds(left: string, right: string) {
