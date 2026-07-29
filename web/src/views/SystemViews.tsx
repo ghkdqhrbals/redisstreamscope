@@ -1,35 +1,106 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Database, KeyRound, LockKeyhole, Plus, RefreshCw, Save, Server, Settings2, ShieldCheck, UserRound } from "lucide-react";
+import { AlertTriangle, Database, KeyRound, LockKeyhole, Pencil, Plus, RefreshCw, Save, Server, Settings2, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { api } from "../api";
 import { PasswordForm } from "../components/PasswordForm";
 import { emptyRedisConnection, RedisConnectionEditor } from "../components/RedisConnectionEditor";
 import { LanguageSelect, useI18n } from "../i18n";
 import type { RedisConnection, RedisConnectionConfig, ToastState } from "../types";
 
-export function ConnectionsView() {
+type ConnectionsViewProps = {
+  role: "viewer" | "operator" | "admin";
+  onToast: (toast: ToastState) => void;
+};
+
+export function ConnectionsView({ role, onToast }: ConnectionsViewProps) {
   const { t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
+  const [configs, setConfigs] = useState<RedisConnectionConfig[]>([]);
+  const [editing, setEditing] = useState<RedisConnectionConfig | null>(null);
+  const [deleting, setDeleting] = useState<RedisConnectionConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setConnections((await api.connections()).items);
+      const [health, settings] = await Promise.all([
+        api.connections(),
+        role === "admin" ? api.settings() : Promise.resolve({ connections: [] }),
+      ]);
+      setConnections(health.items);
+      setConfigs(settings.connections);
     } catch (cause) {
       setError(cause instanceof Error ? t(cause.message) : t("Unable to load connection health."));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [role, t]);
   useEffect(() => { void load(); }, [load]);
+
+  const saveConnection = async () => {
+    if (!editing) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateSettings(configs.map((connection) => connection.id === editing.id ? editing : connection));
+      setEditing(null);
+      window.dispatchEvent(new Event("streamscope:connections-changed"));
+      await load();
+      onToast({ kind: "success", title: t("Redis connection updated"), message: t("The connection was saved and reloaded immediately.") });
+    } catch (cause) {
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to save Redis settings."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (!editing) return;
+    setTesting(true);
+    try {
+      const result = await api.testRedis(editing);
+      onToast({ kind: "success", title: t("Redis connection verified"), message: `${editing.name || editing.id} · ${result.latencyMs.toFixed(1)} ms` });
+    } catch (cause) {
+      onToast({ kind: "error", title: t("Connection failed"), message: cause instanceof Error ? t(cause.message) : t("Redis connection failed.") });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const deleteConnection = async () => {
+    if (!deleting) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateSettings(configs.filter((connection) => connection.id !== deleting.id));
+      const deletedName = deleting.name || deleting.id;
+      setDeleting(null);
+      window.dispatchEvent(new Event("streamscope:connections-changed"));
+      await load();
+      onToast({ kind: "success", title: t("Redis connection deleted"), message: t("Deleted {name} and reloaded the connection list.", { name: deletedName }) });
+    } catch (cause) {
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to delete the Redis connection."));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="system-page">
       <div className="page-header"><div><div className="breadcrumbs">{t("Connections")}</div><h1>{t("Redis connections")}</h1><p>{t("Credentials remain in server configuration and are never sent to the browser.")}</p></div><div className="header-actions"><button onClick={() => void load()} disabled={loading}><RefreshCw size={14} />{loading ? t("Checking…") : t("Check health")}</button></div></div>
       {error ? <div className="page-error">{error}</div> : null}
       {connections.map((connection) => <section className="connection-card" key={connection.id}>
-        <header><div className="connection-icon"><Database size={20} /></div><div><h2>{connection.name}</h2><p>{connection.mode} · {connection.id}</p></div><span className={connection.healthy ? "health-badge" : "health-badge unhealthy"}><i />{connection.healthy ? t("Healthy") : t("Unavailable")}</span></header>
+        <header>
+          <div className="connection-icon"><Database size={20} /></div>
+          <div><h2>{connection.name}</h2><p>{connection.mode} · {connection.id}</p></div>
+          <span className={connection.healthy ? "health-badge" : "health-badge unhealthy"}><i />{connection.healthy ? t("Healthy") : t("Unavailable")}</span>
+          {role === "admin" ? <div className="connection-card-actions">
+            <button type="button" onClick={() => setEditing(configs.find((item) => item.id === connection.id) ?? null)}><Pencil size={14} />{t("Reconfigure")}</button>
+            <button type="button" className="danger" onClick={() => setDeleting(configs.find((item) => item.id === connection.id) ?? null)}><Trash2 size={14} />{t("Delete")}</button>
+          </div> : null}
+        </header>
         <div className="connection-stats"><div><span>{t("Latency")}</span><strong>{connection.latencyMs.toFixed(1)} ms</strong></div><div><span>{t("Mode")}</span><strong>{connection.mode}</strong></div><div><span>{t("ACL user")}</span><strong>{connection.username || "default"}</strong></div><div><span>TLS</span><strong>{connection.tls ? t("Enabled") : t("Disabled")}</strong></div></div>
         <div className="connection-detail">
           <div><Server size={15} /><span>{t("Connection ID")}</span><strong>{connection.id}</strong></div>
@@ -39,6 +110,26 @@ export function ConnectionsView() {
         </div>
       </section>)}
       {!connections.length && !loading ? <div className="panel-empty">{t("No Redis connections are configured.")}</div> : null}
+      {editing ? <div className="modal-backdrop" onMouseDown={() => setEditing(null)}>
+        <section className="modal connection-config-modal" role="dialog" aria-modal="true" aria-labelledby="connection-config-title" onMouseDown={(event) => event.stopPropagation()}>
+          <header><div><h2 id="connection-config-title">{t("Reconfigure Redis connection")}</h2><p>{t("Changes are saved to CONFIG_PATH and applied immediately.")}</p></div><button type="button" onClick={() => setEditing(null)} aria-label={t("Close connection dialog")}><X size={18} /></button></header>
+          <div className="connection-config-modal-body">
+            <RedisConnectionEditor value={editing} onChange={setEditing} compact idReadOnly />
+          </div>
+          <footer>
+            <button type="button" onClick={() => void testConnection()} disabled={testing || saving}><RefreshCw size={14} />{testing ? t("Testing…") : t("Test connection")}</button>
+            <button type="button" onClick={() => setEditing(null)}>{t("Cancel")}</button>
+            <button type="button" className="primary-button" onClick={() => void saveConnection()} disabled={saving || testing}><Save size={14} />{saving ? t("Saving…") : t("Save changes")}</button>
+          </footer>
+        </section>
+      </div> : null}
+      {deleting ? <div className="modal-backdrop" onMouseDown={() => setDeleting(null)}>
+        <section className="modal delete-connection-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-connection-title" onMouseDown={(event) => event.stopPropagation()}>
+          <header><div><h2 id="delete-connection-title">{t("Delete Redis connection")}</h2><p>{deleting.name || deleting.id}</p></div><button type="button" onClick={() => setDeleting(null)} aria-label={t("Close connection dialog")}><X size={18} /></button></header>
+          <div className="delete-connection-warning"><AlertTriangle size={20} /><p>{t("This removes the connection from CONFIG_PATH and immediately stops its active Redis sessions.")}</p></div>
+          <footer><button type="button" onClick={() => setDeleting(null)}>{t("Cancel")}</button><button type="button" className="danger-button" onClick={() => void deleteConnection()} disabled={saving}><Trash2 size={14} />{saving ? t("Deleting…") : t("Delete connection")}</button></footer>
+        </section>
+      </div> : null}
     </div>
   );
 }

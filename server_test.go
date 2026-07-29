@@ -90,6 +90,24 @@ func TestEmptyPasswordKeepsExistingSecretDuringEdit(t *testing.T) {
 	}
 }
 
+func TestMergeConnectionInputsRemovesConnectionsMissingFromUpdate(t *testing.T) {
+	existing := []connectionConfig{
+		{ID: "primary", Name: "Primary", Mode: "standalone", Addrs: []string{"redis-primary:6379"}},
+		{ID: "archive", Name: "Archive", Mode: "standalone", Addrs: []string{"redis-archive:6379"}},
+	}
+	inputs := []connectionInput{
+		{ID: "primary", Name: "Primary", Mode: "standalone", Addrs: []string{"redis-primary:6379"}},
+	}
+
+	connections, err := mergeConnectionInputs(inputs, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(connections) != 1 || connections[0].ID != "primary" {
+		t.Fatalf("missing connections must be removed, got %#v", connections)
+	}
+}
+
 func TestConsumersRequiresGroup(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/consumers?connectionId=redis&key=orders", nil)
 	response := httptest.NewRecorder()

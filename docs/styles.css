@@ -417,7 +417,13 @@ h3 {
   font-size: 14px;
 }
 
+.preview-grid {
+  display: grid;
+  gap: 28px;
+}
+
 .preview-frame {
+  margin: 0;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -431,6 +437,13 @@ h3 {
   border-radius: 8px;
   display: block;
   background: #ffffff;
+}
+
+.preview-frame figcaption {
+  padding: 13px 4px 2px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .steps {

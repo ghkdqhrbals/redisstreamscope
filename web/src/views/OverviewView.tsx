@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Clock3, Database, Gauge, ListChecks, RefreshCw, UsersRound } from "lucide-react";
 import { api } from "../api";
+import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
 import type { OverviewStreamItem, RedisConnection } from "../types";
 
@@ -66,6 +67,15 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
     }
     return { entries, consumerGroups, totalLag, pending, lagKnown, lastConsumed };
   }, [streams]);
+  const streamColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "key", label: t("Key"), defaultWidth: 260, minWidth: 170, grow: true },
+    { id: "entries", label: t("Entries"), defaultWidth: 110, minWidth: 85 },
+    { id: "groups", label: t("Consumer groups"), defaultWidth: 150, minWidth: 120 },
+    { id: "lag", label: t("Total lag"), defaultWidth: 115, minWidth: 90 },
+    { id: "pending", label: t("Pending"), defaultWidth: 110, minWidth: 85 },
+    { id: "last-consumed", label: t("Last consumed"), defaultWidth: 200, minWidth: 150 },
+    { id: "connection", label: t("Connection"), defaultWidth: 170, minWidth: 120 },
+  ], [t]);
 
   return (
     <div className="overview-page">
@@ -97,11 +107,7 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
         </section>
         <section className="streams-panel">
           <div className="section-title"><h2>{t("Streams")}</h2></div>
-          <div className="overview-stream-table">
-            <div className="overview-stream-head">
-              <span>{t("Key")}</span><span>{t("Entries")}</span><span>{t("Consumer groups")}</span>
-              <span>{t("Total lag")}</span><span>{t("Pending")}</span><span>{t("Last consumed")}</span><span>{t("Connection")}</span>
-            </div>
+          <ResizableGrid className="overview-stream-table" storageKey="overview-streams" columns={streamColumns} headerClassName="overview-stream-head">
             {streams.map((stream) => (
               <div className="overview-stream-row" key={`${stream.connectionId}:${stream.key}`}>
                 <strong className="mono">{stream.key}</strong>
@@ -123,7 +129,7 @@ export function OverviewView({ onOpenGroups }: OverviewViewProps) {
               </div>
             ))}
             {!streams.length && !loading ? <div className="panel-empty">{t("No streams match the current pattern.")}</div> : null}
-          </div>
+          </ResizableGrid>
         </section>
       </div>
     </div>

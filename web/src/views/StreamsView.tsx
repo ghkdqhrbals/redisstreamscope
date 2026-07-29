@@ -1,9 +1,5 @@
 import {
-  type CSSProperties,
   FormEvent,
-  type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -27,6 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
+import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
 import type { ConsumerGroup, ConsumerInfo, PendingEntry, RedisConnection, RedisEntry, StreamItem, ToastState } from "../types";
 
@@ -37,24 +34,6 @@ type StreamsViewProps = {
 };
 
 type MessageSortKey = "id" | "timestamp" | "size" | "fields";
-type MessageColumnKey = "id" | "timestamp" | "payload" | "size" | "fields";
-
-const MESSAGE_COLUMN_STORAGE_KEY = "streamscope:message-columns:v1";
-const MESSAGE_COLUMN_ORDER: MessageColumnKey[] = ["id", "timestamp", "payload", "size", "fields"];
-const DEFAULT_MESSAGE_COLUMN_WIDTHS: Record<MessageColumnKey, number> = {
-  id: 180,
-  timestamp: 205,
-  payload: 420,
-  size: 95,
-  fields: 90,
-};
-const MIN_MESSAGE_COLUMN_WIDTHS: Record<MessageColumnKey, number> = {
-  id: 130,
-  timestamp: 160,
-  payload: 220,
-  size: 80,
-  fields: 80,
-};
 
 export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast }: StreamsViewProps) {
   const { locale, t } = useI18n();
@@ -72,7 +51,6 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   const [streamQuery, setStreamQuery] = useState("");
   const [search, setSearch] = useState("");
   const [messageSort, setMessageSort] = useState<{ key: MessageSortKey; direction: "asc" | "desc" }>({ key: "id", direction: "desc" });
-  const [messageColumnWidths, setMessageColumnWidths] = useState<Record<MessageColumnKey, number>>(loadMessageColumnWidths);
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"idle" | "connecting" | "live" | "reconnecting">("idle");
   const [paused, setPaused] = useState(false);
@@ -88,6 +66,27 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   const [error, setError] = useState("");
   const deferredStreamQuery = useDeferredValue(streamQuery.trim().toLowerCase());
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
+  const streamColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "key", label: t("Stream key"), defaultWidth: 280, minWidth: 180, grow: true },
+    { id: "length", label: t("Length"), defaultWidth: 120, minWidth: 80 },
+    { id: "status", label: t("Status"), defaultWidth: 110, minWidth: 85 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 36, minWidth: 28 },
+  ], [t]);
+  const messageColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "id", label: "ID", defaultWidth: 180, minWidth: 130 },
+    { id: "timestamp", label: t("Timestamp"), defaultWidth: 205, minWidth: 160 },
+    { id: "payload", label: t("Payload preview"), defaultWidth: 420, minWidth: 220, grow: true },
+    { id: "size", label: t("Size"), defaultWidth: 95, minWidth: 80 },
+    { id: "fields", label: t("Fields"), defaultWidth: 90, minWidth: 80 },
+  ], [t]);
+  const groupColumns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "name", label: t("Name"), defaultWidth: 220, minWidth: 140, grow: true },
+    { id: "consumers", label: t("Consumers"), defaultWidth: 105, minWidth: 85 },
+    { id: "pending", label: t("Pending"), defaultWidth: 95, minWidth: 75 },
+    { id: "lag", label: t("Lag"), defaultWidth: 90, minWidth: 70 },
+    { id: "last-delivered", label: t("Last delivered ID"), defaultWidth: 220, minWidth: 150 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 38, minWidth: 28 },
+  ], [t]);
 
   const loadEntriesAndGroups = useCallback(async (nextConnectionId: string, nextKey: string) => {
     if (!nextConnectionId || !nextKey) {
@@ -136,10 +135,6 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   }, [connectionId, key, loadEntriesAndGroups, onSelectedStreamChange, selectedStreamKey, t]);
 
   useEffect(() => { void load(); }, []); // Initial discovery only.
-
-  useEffect(() => {
-    window.localStorage.setItem(MESSAGE_COLUMN_STORAGE_KEY, JSON.stringify(messageColumnWidths));
-  }, [messageColumnWidths]);
 
   useEffect(() => {
     if (!live || paused || !connectionId || !key) {
@@ -242,42 +237,6 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
       : { key: nextKey, direction: "desc" });
   };
 
-  const beginColumnResize = (event: ReactPointerEvent<HTMLSpanElement>, column: MessageColumnKey) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = messageColumnWidths[column];
-    document.body.classList.add("column-resizing");
-    const resize = (moveEvent: PointerEvent) => {
-      const width = Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], startWidth + moveEvent.clientX - startX);
-      setMessageColumnWidths((current) => current[column] === width ? current : { ...current, [column]: width });
-    };
-    const finish = () => {
-      document.body.classList.remove("column-resizing");
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", finish, { once: true });
-    window.addEventListener("pointercancel", finish, { once: true });
-  };
-
-  const resizeColumnWithKeyboard = (event: KeyboardEvent<HTMLSpanElement>, column: MessageColumnKey) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const change = event.key === "ArrowLeft" ? -16 : 16;
-    setMessageColumnWidths((current) => ({
-      ...current,
-      [column]: Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], current[column] + change),
-    }));
-  };
-
-  const messageGridStyle = useMemo(() => ({
-    "--message-columns": MESSAGE_COLUMN_ORDER.map((column) => `${messageColumnWidths[column]}px`).join(" "),
-    minWidth: `${MESSAGE_COLUMN_ORDER.reduce((total, column) => total + messageColumnWidths[column], 0)}px`,
-  } as CSSProperties), [messageColumnWidths]);
-
   const loadMoreStreams = async () => {
     if (!connectionId || !hasMoreStreams || loadingMoreStreams) return;
     setLoadingMoreStreams(true);
@@ -359,14 +318,13 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
 
         <section className="stream-catalog">
           <header><h2>{t("Streams")}</h2><label><Search size={15} /><input value={streamQuery} onChange={(event) => setStreamQuery(event.target.value)} placeholder={t("Filter stream keys…")} /></label></header>
-          <div className="stream-catalog-table">
-            <div className="stream-catalog-head"><span>{t("Stream key")}</span><span>{t("Length")}</span><span>{t("Status")}</span><span /></div>
+          <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
             {filteredStreams.map((stream) => <button key={stream.key} className={stream.key === key ? "selected" : ""} onClick={() => void changeStream(stream.key)}>
               <span className="mono">{stream.key}</span><span>{stream.length.toLocaleString(locale)}</span><span>{stream.key === key ? t("Opened") : t("Ready")}</span><ChevronRight size={16} />
             </button>)}
             {!filteredStreams.length && !loading ? <div className="panel-empty">{streams.length ? t("No streams match this filter.") : t("No streams match the current pattern.")}</div> : null}
             {hasMoreStreams && !streamQuery ? <div className="table-load-more"><button type="button" onClick={() => void loadMoreStreams()} disabled={loadingMoreStreams}>{loadingMoreStreams ? t("Loading more…") : t("Load more")}</button></div> : null}
-          </div>
+          </ResizableGrid>
         </section>
 
         {key ? <div className="stream-detail">
@@ -387,24 +345,17 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
             {live ? <span className={`live-state live-state--${liveStatus}`}><Radio size={12} />{liveLabel}</span> : null}
           </div>
           <div className="message-table-scroll">
-            <div className="message-table" style={messageGridStyle}>
-              <div className="message-table-head">
-                <MessageHeaderCell column="id" label="ID" onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, id: DEFAULT_MESSAGE_COLUMN_WIDTHS.id }))}>
-                  <button className={messageSort.key === "id" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("id")}>ID <ArrowDownUp size={13} /></button>
-                </MessageHeaderCell>
-                <MessageHeaderCell column="timestamp" label={t("Timestamp")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, timestamp: DEFAULT_MESSAGE_COLUMN_WIDTHS.timestamp }))}>
-                  <button className={messageSort.key === "timestamp" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("timestamp")}>{t("Timestamp")} <ArrowDownUp size={13} /></button>
-                </MessageHeaderCell>
-                <MessageHeaderCell column="payload" label={t("Payload preview")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, payload: DEFAULT_MESSAGE_COLUMN_WIDTHS.payload }))}>
-                  <span>{t("Payload preview")}</span>
-                </MessageHeaderCell>
-                <MessageHeaderCell column="size" label={t("Size")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, size: DEFAULT_MESSAGE_COLUMN_WIDTHS.size }))}>
-                  <button className={messageSort.key === "size" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("size")}>{t("Size")} <ArrowDownUp size={13} /></button>
-                </MessageHeaderCell>
-                <MessageHeaderCell column="fields" label={t("Fields")} onPointerDown={beginColumnResize} onKeyDown={resizeColumnWithKeyboard} onReset={() => setMessageColumnWidths((current) => ({ ...current, fields: DEFAULT_MESSAGE_COLUMN_WIDTHS.fields }))}>
-                  <button className={messageSort.key === "fields" ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort("fields")}>{t("Fields")} <ArrowDownUp size={13} /></button>
-                </MessageHeaderCell>
-              </div>
+            <ResizableGrid
+              className="message-table"
+              storageKey="stream-messages"
+              columns={messageColumns}
+              headerClassName="message-table-head"
+              renderHeader={(column) => {
+                if (column.id === "payload") return column.label;
+                const sortKey = column.id as MessageSortKey;
+                return <button className={messageSort.key === sortKey ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort(sortKey)}>{column.label} <ArrowDownUp size={13} /></button>;
+              }}
+            >
               <div className="message-table-body">
               {displayedEntries.map((entry) => <button className={`message-row ${entry.id === selectedId && tab === "messages" ? "selected" : ""}`} key={entry.id} onClick={() => { setSelectedId(entry.id); setTab("messages"); }}>
                 <span className="mono id-cell">{entry.id}</span>
@@ -415,18 +366,17 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
               </button>)}
               {!displayedEntries.length && !loading ? <div className="empty-table">{key ? t("No entries to display.") : t("No streams match the current pattern.")}</div> : null}
               </div>
-            </div>
+            </ResizableGrid>
           </div>
           <div className="table-footer"><span>{t("Showing {visible} of {total} entries", { visible: displayedEntries.length, total: selectedStream?.length.toLocaleString(locale) ?? 0 })}</span><div><span>{t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}</span>{hasMoreEntries ? <button type="button" onClick={() => void loadMoreEntries()} disabled={loadingMoreEntries}>{loadingMoreEntries ? t("Loading more…") : t("Load more")}</button> : null}</div></div>
           </section>
 
           <section className="stream-data-section stream-groups-section">
           <div className="surface-heading"><h2>{t("Consumer groups")}</h2></div>
-          <div className="simple-table">
-            <div className="simple-head"><span>{t("Name")}</span><span>{t("Consumers")}</span><span>{t("Pending")}</span><span>{t("Lag")}</span><span>{t("Last delivered ID")}</span><span /></div>
+          <ResizableGrid className="simple-table" storageKey="stream-consumer-groups" columns={groupColumns} headerClassName="simple-head">
             {groups.map((group) => <button className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`} key={group.name} onClick={() => void openGroup(group.name)}><span><UsersRound size={15} />{group.name}</span><span>{group.consumers}</span><span>{group.pending}</span><span>{group.lag}</span><span className="mono">{group.lastDeliveredId}</span><ChevronRight size={16} /></button>)}
             {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
-          </div>
+          </ResizableGrid>
           </section>
 
           <div className="stream-data-section info-grid">
@@ -446,35 +396,29 @@ export function StreamsView({ selectedStreamKey, onSelectedStreamChange, onToast
   );
 }
 
-function MessageHeaderCell({
-  column,
-  label,
-  children,
-  onPointerDown,
-  onKeyDown,
-  onReset,
+function ConsumerPendingTable({
+  pending,
+  storageKey,
+  firstColumnLabel,
 }: {
-  column: MessageColumnKey;
-  label: string;
-  children: ReactNode;
-  onPointerDown: (event: ReactPointerEvent<HTMLSpanElement>, column: MessageColumnKey) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLSpanElement>, column: MessageColumnKey) => void;
-  onReset: () => void;
+  pending: PendingEntry[];
+  storageKey: string;
+  firstColumnLabel: string;
 }) {
   const { t } = useI18n();
-  return <div className="message-header-cell">
-    {children}
-    <span
-      className="column-resize-handle"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={t("Resize {column} column", { column: label })}
-      tabIndex={0}
-      onPointerDown={(event) => onPointerDown(event, column)}
-      onKeyDown={(event) => onKeyDown(event, column)}
-      onDoubleClick={onReset}
-    />
-  </div>;
+  const columns = useMemo<ResizableGridColumn[]>(() => [
+    { id: "message", label: firstColumnLabel, defaultWidth: 210, minWidth: 130, grow: true },
+    { id: "deliveries", label: t("Deliveries"), defaultWidth: 82, minWidth: 68 },
+    { id: "idle", label: t("Idle"), defaultWidth: 82, minWidth: 68 },
+  ], [firstColumnLabel, t]);
+  return (
+    <ResizableGrid className="consumer-pending-table" storageKey={storageKey} columns={columns} headerClassName="consumer-pending-head">
+      <div className="consumer-pending-list">
+        {pending.map((entry) => <div key={entry.id}><strong className="mono">{entry.id}</strong><span>{entry.retryCount}</span><span>{formatDuration(entry.idleMs)}</span></div>)}
+        {!pending.length ? <div className="panel-empty">{t("No messages are assigned in the PEL.")}</div> : null}
+      </div>
+    </ResizableGrid>
+  );
 }
 
 function ConsumerGroupInspector({
@@ -532,11 +476,7 @@ function ConsumerGroupInspector({
         <div><span>{t("Idle")}</span><strong>{formatDuration(consumer.idleMs)}</strong></div>
         <div><span>{t("Inactive")}</span><strong>{formatDuration(consumer.inactiveMs)}</strong></div>
       </div>
-      <div className="consumer-pending-head"><span>{t("Assigned message")}</span><span>{t("Deliveries")}</span><span>{t("Idle")}</span></div>
-      <div className="consumer-pending-list">
-        {consumerPending.map((entry) => <div key={entry.id}><strong className="mono">{entry.id}</strong><span>{entry.retryCount}</span><span>{formatDuration(entry.idleMs)}</span></div>)}
-        {!consumerPending.length ? <div className="panel-empty">{t("No messages are assigned in the PEL.")}</div> : null}
-      </div>
+      <ConsumerPendingTable pending={consumerPending} storageKey="stream-group-inspector-pending" firstColumnLabel={t("Assigned message")} />
     </section> : null}
   </aside>;
 }
@@ -614,18 +554,6 @@ function formatTimestamp(value: string, locale: string) {
 
 function entrySize(entry: RedisEntry) {
   return new Blob([JSON.stringify(entry.fields)]).size;
-}
-
-function loadMessageColumnWidths(): Record<MessageColumnKey, number> {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(MESSAGE_COLUMN_STORAGE_KEY) ?? "{}") as Partial<Record<MessageColumnKey, number>>;
-    return Object.fromEntries(MESSAGE_COLUMN_ORDER.map((column) => [
-      column,
-      Math.max(MIN_MESSAGE_COLUMN_WIDTHS[column], Number(saved[column]) || DEFAULT_MESSAGE_COLUMN_WIDTHS[column]),
-    ])) as Record<MessageColumnKey, number>;
-  } catch {
-    return { ...DEFAULT_MESSAGE_COLUMN_WIDTHS };
-  }
 }
 
 function compareStreamIds(left: string, right: string) {

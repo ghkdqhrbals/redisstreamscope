@@ -143,7 +143,7 @@ export function App() {
         }} /> : null}
         {page === "streams" ? <StreamsView selectedStreamKey={selectedStreamKey} onSelectedStreamChange={setSelectedStreamKey} onToast={setToast} /> : null}
         {page === "groups" ? <GroupsView initialConnectionId={selectedGroupTarget?.connectionId} initialStreamKey={selectedGroupTarget?.key} onToast={setToast} /> : null}
-        {page === "connections" ? <ConnectionsView /> : null}
+        {page === "connections" ? <ConnectionsView role={role} onToast={setToast} /> : null}
         {page === "access" && role === "admin" ? <AccessControlView onToast={setToast} /> : null}
         {page === "settings" ? <SettingsView username={username} role={role} onUsernameChanged={setUsername} onToast={setToast} /> : null}
       </AppShell>

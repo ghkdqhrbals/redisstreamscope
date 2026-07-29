@@ -15,7 +15,7 @@
     />
     <meta
       property="og:image"
-      content="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-light-streams.png"
+      content="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-overview.png"
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://ghkdqhrbals.github.io/streamscope/" />
@@ -57,17 +57,17 @@
             Redis Streams operations console
           </p>
           <h1
-            data-en="See every stream, message, and consumer clearly."
-            data-ko="스트림, 메시지, 컨슈머를 한눈에 확인하세요."
+            data-en="Run it. Connect Redis in the browser. Done."
+            data-ko="실행하고, 화면에서 Redis를 연결하면 끝입니다."
           >
-            See every stream, message, and consumer clearly.
+            Run it. Connect Redis in the browser. Done.
           </h1>
           <p
             class="hero-description"
-            data-en="A lightweight, self-hosted interface for inspecting Redis Streams, tracking consumer groups, and managing access."
-            data-ko="Redis Streams 조회, 컨슈머 그룹 추적, 접근 권한 관리를 위한 가벼운 셀프 호스팅 인터페이스입니다."
+            data-en="Start StreamScope with one Docker command. No config file first, no Redis options to memorize. Add your connection from Settings when the UI opens."
+            data-ko="Docker 명령어 한 줄로 시작하세요. 설정 파일도, 외워야 할 Redis 옵션도 없습니다. 화면이 열리면 Settings에서 연결만 추가하면 됩니다."
           >
-            A lightweight, self-hosted interface for inspecting Redis Streams, tracking consumer groups, and managing access.
+            Start StreamScope with one Docker command. No config file first, no Redis options to memorize. Add your connection from Settings when the UI opens.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#quick-start" data-en="Run with Docker" data-ko="Docker로 실행">
@@ -89,14 +89,18 @@
             <button
               class="copy-button"
               type="button"
-              data-copy="docker compose up -d"
+              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
               data-en="Copy"
               data-ko="복사"
               data-copied-en="Copied"
               data-copied-ko="복사됨"
             >Copy</button>
           </div>
-          <pre><code>docker compose up -d</code></pre>
+          <pre><code>docker run -d \
+  --name streamscope \
+  -p 8080:8080 \
+  -v streamscope-data:/data \
+  ghcr.io/ghkdqhrbals/streamscope:latest</code></pre>
           <div class="login-row">
             <span data-en="Open" data-ko="접속">Open</span>
             <a href="http://localhost:8080">localhost:8080</a>
@@ -233,13 +237,51 @@
             Built for long-running operational work.
           </h2>
         </div>
-        <div class="preview-frame">
-          <img
-            src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-light-streams.png"
-            alt="StreamScope streams interface"
-            data-alt-en="StreamScope streams interface"
-            data-alt-ko="StreamScope 스트림 화면"
-          />
+        <div class="preview-grid">
+          <figure class="preview-frame">
+            <img
+              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-overview.png"
+              alt="StreamScope overview interface"
+              data-alt-en="StreamScope overview interface"
+              data-alt-ko="StreamScope 개요 화면"
+            />
+            <figcaption data-en="Overview across streams and consumer groups" data-ko="Streams와 Consumer Group 전체 개요">
+              Overview across streams and consumer groups
+            </figcaption>
+          </figure>
+          <figure class="preview-frame">
+            <img
+              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-streams.png"
+              alt="StreamScope streams interface"
+              data-alt-en="StreamScope streams interface"
+              data-alt-ko="StreamScope 스트림 화면"
+            />
+            <figcaption data-en="Streams, entries, and consumer groups" data-ko="Streams, 엔트리, Consumer Group">
+              Streams, entries, and consumer groups
+            </figcaption>
+          </figure>
+          <figure class="preview-frame">
+            <img
+              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-consumer-groups.png"
+              alt="StreamScope consumer groups interface"
+              data-alt-en="StreamScope consumer groups interface"
+              data-alt-ko="StreamScope Consumer Group 화면"
+            />
+            <figcaption data-en="Consumer activity, pending entries, lag, and ownership" data-ko="Consumer 활동, Pending, Lag, 소유권">
+              Consumer activity, pending entries, lag, and ownership
+            </figcaption>
+          </figure>
+          <figure class="preview-frame">
+            <img
+              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-connections.png"
+              alt="StreamScope Redis connections interface"
+              data-alt-en="StreamScope Redis connections interface"
+              data-alt-ko="StreamScope Redis 연결 화면"
+            />
+            <figcaption data-en="Check, reconfigure, or remove Redis connections" data-ko="Redis 연결 상태 확인, 재설정, 삭제">
+              Check, reconfigure, or remove Redis connections
+            </figcaption>
+          </figure>
         </div>
       </section>
 
@@ -256,11 +298,11 @@
             <div>
               <h3 data-en="Start StreamScope" data-ko="StreamScope 실행">Start StreamScope</h3>
               <div class="code-row">
-                <code>docker compose up -d</code>
+                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest</code>
                 <button
                   class="copy-button"
                   type="button"
-                  data-copy="docker compose up -d"
+                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
                   data-en="Copy"
                   data-ko="복사"
                   data-copied-en="Copied"
@@ -281,10 +323,10 @@
             <div>
               <h3 data-en="Connect Redis" data-ko="Redis 연결">Connect Redis</h3>
               <p
-                data-en="Open Settings and add a standalone, Sentinel, or Cluster connection. Passwords are optional."
-                data-ko="Settings에서 standalone, Sentinel 또는 Cluster 연결을 추가합니다. 비밀번호는 선택 사항입니다."
+                data-en="Open Settings → Redis connections. Add your server, test it, and save. Standalone, Sentinel, Cluster, ACL, passwords, and TLS are all supported."
+                data-ko="Settings → Redis connections를 여세요. 서버를 추가하고, 테스트한 뒤 저장하면 끝입니다. Standalone, Sentinel, Cluster, ACL, 비밀번호, TLS를 모두 지원합니다."
               >
-                Open Settings and add a standalone, Sentinel, or Cluster connection. Passwords are optional.
+                Open Settings → Redis connections. Add your server, test it, and save. Standalone, Sentinel, Cluster, ACL, passwords, and TLS are all supported.
               </p>
             </div>
           </article>
@@ -305,8 +347,8 @@
       <section class="section" id="configuration">
         <div class="section-heading">
           <p class="eyebrow" data-en="Configuration" data-ko="설정">Configuration</p>
-          <h2 data-en="Small by default, flexible when needed." data-ko="기본은 단순하게, 필요할 때 유연하게.">
-            Small by default, flexible when needed.
+          <h2 data-en="Configure everything in the browser." data-ko="모든 설정은 브라우저에서 하세요.">
+            Configure everything in the browser.
           </h2>
         </div>
         <div class="configuration-grid">
@@ -320,12 +362,12 @@
             </p>
           </article>
           <article>
-            <h3 data-en="Startup configuration" data-ko="시작 설정">Startup configuration</h3>
+            <h3 data-en="Redis connections" data-ko="Redis 연결">Redis connections</h3>
             <p
-              data-en="REDIS_HOST, REDIS_NODES, or REDIS_URL can create the first connection automatically."
-              data-ko="REDIS_HOST, REDIS_NODES 또는 REDIS_URL로 첫 연결을 자동 생성할 수 있습니다."
+              data-en="Add, test, reconfigure, or remove Redis connections from Settings. There is nothing to prepare before the container starts."
+              data-ko="Settings에서 Redis 연결을 추가, 테스트, 재설정, 삭제할 수 있습니다. 컨테이너를 실행하기 전에 준비할 것은 없습니다."
             >
-              REDIS_HOST, REDIS_NODES, or REDIS_URL can create the first connection automatically.
+              Add, test, reconfigure, or remove Redis connections from Settings. There is nothing to prepare before the container starts.
             </p>
           </article>
           <article>
@@ -339,12 +381,8 @@
           </article>
         </div>
         <div class="documentation-links">
-          <a href="https://github.com/ghkdqhrbals/streamscope#startup-environment-variables">
-            <span data-en="Environment variables" data-ko="환경 변수">Environment variables</span>
-            <span aria-hidden="true">→</span>
-          </a>
-          <a href="https://github.com/ghkdqhrbals/streamscope/blob/main/config.properties">
-            <span>config.properties</span>
+          <a href="https://github.com/ghkdqhrbals/streamscope#quick-start">
+            <span data-en="Quick start guide" data-ko="빠른 시작 가이드">Quick start guide</span>
             <span aria-hidden="true">→</span>
           </a>
           <a href="https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope">
