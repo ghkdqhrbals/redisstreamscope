@@ -1,6 +1,10 @@
 # StreamScope
 
-## Screenshots
+A lightweight, self-hosted operations console for Redis Streams. Inspect streams and messages, follow live traffic, examine consumer groups and pending entries, manage Redis connections, and control user access from one interface.
+
+[Documentation](https://ghkdqhrbals.github.io/streamscope/) · [Container image](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
+
+## Preview
 
 ### Streams
 
@@ -10,22 +14,20 @@
 
 ![StreamScope Redis Settings](./design/streamscope-light-settings.png)
 
-## Quick Start
+## Quick start
 
 ```sh
 docker compose up -d
 ```
 
-브라우저에서 [http://localhost:8080](http://localhost:8080)을 열고 로그인합니다.
+Open [http://localhost:8080](http://localhost:8080) and sign in with:
 
-- ID: `admin`
+- Username: `admin`
 - Password: `password`
 
-로그인 후 Settings 화면에서 Redis 연결을 추가합니다. 관리자 비밀번호도 Settings에서 필요할 때 변경할 수 있습니다.
+Add your Redis connection from **Settings**. When Redis runs directly on a macOS or Windows Docker host, use `host.docker.internal:6379` instead of `localhost:6379`.
 
-Docker Desktop에서 Mac 또는 Windows 호스트에 실행 중인 Redis를 연결할 때는 Redis 주소에 `localhost:6379` 대신 `host.docker.internal:6379`를 입력합니다.
-
-## Docker Run
+## Docker run
 
 ```sh
 docker run -d \
@@ -35,7 +37,7 @@ docker run -d \
   ghcr.io/ghkdqhrbals/streamscope:latest
 ```
 
-호스트의 `9090` 포트로 실행하려면:
+To expose StreamScope on host port `9090`:
 
 ```sh
 docker run -d \
@@ -45,7 +47,7 @@ docker run -d \
   ghcr.io/ghkdqhrbals/streamscope:latest
 ```
 
-Redis 설정을 실행 시 미리 전달하려면:
+The first Redis connection can optionally be supplied at startup:
 
 ```sh
 docker run -d \
@@ -59,35 +61,35 @@ docker run -d \
   ghcr.io/ghkdqhrbals/streamscope:latest
 ```
 
-Redis에 비밀번호가 없으면 `REDIS_PASSWORD`를 생략합니다. 전달한 Redis 설정은 `/data/config.properties`에 저장되므로 같은 볼륨을 다시 연결하면 환경변수 없이도 유지됩니다.
+Omit `REDIS_PASSWORD` when Redis does not require one. Startup settings are saved to `/data/config.properties` and remain available when the same volume is mounted again.
 
-사용 가능한 실행 환경변수:
+## Startup environment variables
 
-| 변수 | 기본값 | 설명 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8080` | 컨테이너 내부 HTTP 포트 |
-| `REDIS_ID` | `default` | 연결 ID |
-| `REDIS_NAME` | `Redis` | 화면 표시 이름 |
-| `REDIS_MODE` | `standalone` | `standalone`, `sentinel`, `cluster` |
-| `REDIS_HOST` | 없음 | 단일 Redis 호스트 |
-| `REDIS_PORT` | `6379` | Redis 포트 |
-| `REDIS_NODES` | 없음 | Cluster 노드 목록 (`host:port,host:port`) |
-| `REDIS_URL` | 없음 | `redis://` 또는 `rediss://` URL |
-| `REDIS_MASTER_NAME` | 없음 | Sentinel master 이름 |
-| `REDIS_USERNAME` | 없음 | Redis ACL 사용자 |
-| `REDIS_PASSWORD` | 없음 | Redis 비밀번호 |
-| `REDIS_PASSWORD_FILE` | 없음 | Redis 비밀번호 파일 |
+| `PORT` | `8080` | HTTP port inside the container |
+| `REDIS_ID` | `default` | Connection ID |
+| `REDIS_NAME` | `Redis` | Display name |
+| `REDIS_MODE` | `standalone` | `standalone`, `sentinel`, or `cluster` |
+| `REDIS_HOST` | — | Standalone Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_NODES` | — | Cluster nodes (`host:port,host:port`) |
+| `REDIS_URL` | — | `redis://` or `rediss://` URL |
+| `REDIS_MASTER_NAME` | — | Sentinel master name |
+| `REDIS_USERNAME` | — | Redis ACL username |
+| `REDIS_PASSWORD` | — | Redis password |
+| `REDIS_PASSWORD_FILE` | — | File containing the Redis password |
 | `REDIS_DATABASE` | `0` | Redis database |
-| `REDIS_KEY_PATTERN` | `*` | Stream 검색 패턴 |
-| `REDIS_TLS` | `false` | TLS 사용 여부 |
-| `REDIS_TLS_SERVER_NAME` | 없음 | TLS 서버 이름 |
-| `REDIS_TLS_CA_FILE` | 없음 | CA 인증서 경로 |
-| `REDIS_TLS_CERT_FILE` | 없음 | mTLS 인증서 경로 |
-| `REDIS_TLS_KEY_FILE` | 없음 | mTLS 개인 키 경로 |
+| `REDIS_KEY_PATTERN` | `*` | Stream discovery pattern |
+| `REDIS_TLS` | `false` | Enable TLS |
+| `REDIS_TLS_SERVER_NAME` | — | TLS server name |
+| `REDIS_TLS_CA_FILE` | — | CA certificate path |
+| `REDIS_TLS_CERT_FILE` | — | mTLS client certificate path |
+| `REDIS_TLS_KEY_FILE` | — | mTLS private key path |
 
-`REDIS_HOST`, `REDIS_NODES`, `REDIS_URL` 중 하나만 사용합니다. 전체 저장 형식과 기본값은 [config.properties](./config.properties)의 주석에서 확인할 수 있습니다.
+Use only one of `REDIS_HOST`, `REDIS_NODES`, or `REDIS_URL`. See the commented [config.properties](./config.properties) template for the complete persisted configuration format and defaults.
 
-로컬 소스에서 이미지를 직접 빌드하려면:
+## Build locally
 
 ```sh
 docker build -t streamscope:local .

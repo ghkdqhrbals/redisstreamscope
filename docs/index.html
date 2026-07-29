@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="StreamScope is a lightweight, self-hosted Redis Streams operations console."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <meta property="og:title" content="StreamScope" />
+    <meta
+      property="og:description"
+      content="A lightweight, self-hosted operations console for Redis Streams."
+    />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-light-streams.png"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ghkdqhrbals.github.io/streamscope/" />
+    <title>StreamScope — Redis Streams Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main" data-en="Skip to content" data-ko="본문으로 이동">Skip to content</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="wordmark" href="#top" aria-label="StreamScope home">StreamScope</a>
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a href="#features" data-en="Features" data-ko="기능">Features</a>
+          <a href="#quick-start" data-en="Quick start" data-ko="빠른 시작">Quick start</a>
+          <a href="#configuration" data-en="Configuration" data-ko="설정">Configuration</a>
+        </nav>
+        <div class="header-actions">
+          <div class="language-switcher" role="group" aria-label="Language">
+            <button type="button" data-language="en" aria-pressed="true">EN</button>
+            <button type="button" data-language="ko" aria-pressed="false">한국어</button>
+          </div>
+          <a
+            class="github-link"
+            href="https://github.com/ghkdqhrbals/streamscope"
+            data-en="GitHub"
+            data-ko="GitHub"
+          >GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow" data-en="Redis Streams operations console" data-ko="Redis Streams 운영 콘솔">
+            Redis Streams operations console
+          </p>
+          <h1
+            data-en="See every stream, message, and consumer clearly."
+            data-ko="스트림, 메시지, 컨슈머를 한눈에 확인하세요."
+          >
+            See every stream, message, and consumer clearly.
+          </h1>
+          <p
+            class="hero-description"
+            data-en="A lightweight, self-hosted interface for inspecting Redis Streams, tracking consumer groups, and managing access."
+            data-ko="Redis Streams 조회, 컨슈머 그룹 추적, 접근 권한 관리를 위한 가벼운 셀프 호스팅 인터페이스입니다."
+          >
+            A lightweight, self-hosted interface for inspecting Redis Streams, tracking consumer groups, and managing access.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quick-start" data-en="Run with Docker" data-ko="Docker로 실행">
+              Run with Docker
+            </a>
+            <a
+              class="button button-secondary"
+              href="https://github.com/ghkdqhrbals/streamscope"
+              data-en="View source"
+              data-ko="소스 보기"
+            >
+              View source
+            </a>
+          </div>
+        </div>
+        <div class="terminal-card" aria-label="Docker quick start">
+          <div class="terminal-bar">
+            <span>Quick start</span>
+            <button
+              class="copy-button"
+              type="button"
+              data-copy="docker compose up -d"
+              data-en="Copy"
+              data-ko="복사"
+              data-copied-en="Copied"
+              data-copied-ko="복사됨"
+            >Copy</button>
+          </div>
+          <pre><code>docker compose up -d</code></pre>
+          <div class="login-row">
+            <span data-en="Open" data-ko="접속">Open</span>
+            <a href="http://localhost:8080">localhost:8080</a>
+          </div>
+          <div class="login-row">
+            <span data-en="Sign in" data-ko="로그인">Sign in</span>
+            <code>admin / password</code>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Operations" data-ko="운영">Operations</p>
+          <h2 data-en="The details you need, without the noise." data-ko="필요한 정보만 선명하게.">
+            The details you need, without the noise.
+          </h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <p class="feature-index">01</p>
+            <h3 data-en="Streams and messages" data-ko="스트림과 메시지">Streams and messages</h3>
+            <p
+              data-en="Browse stream metadata, entries, field values, lengths, and MAXLEN settings from a single workspace."
+              data-ko="하나의 화면에서 스트림 메타데이터, 엔트리, 필드 값, 길이, MAXLEN 설정을 확인합니다."
+            >
+              Browse stream metadata, entries, field values, lengths, and MAXLEN settings from a single workspace.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">02</p>
+            <h3 data-en="Consumer groups" data-ko="컨슈머 그룹">Consumer groups</h3>
+            <p
+              data-en="Inspect groups, consumers, lag, pending entries, idle time, delivery counts, and ownership."
+              data-ko="그룹, 컨슈머, 지연, Pending 엔트리, 유휴 시간, 전달 횟수와 소유자를 조회합니다."
+            >
+              Inspect groups, consumers, lag, pending entries, idle time, delivery counts, and ownership.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">03</p>
+            <h3 data-en="Live tail" data-ko="실시간 Tail">Live tail</h3>
+            <p
+              data-en="Follow new entries as they arrive, with reconnect handling and a clear connection state."
+              data-ko="새 엔트리를 실시간으로 확인하고, 재연결 처리와 연결 상태를 명확하게 표시합니다."
+            >
+              Follow new entries as they arrive, with reconnect handling and a clear connection state.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">04</p>
+            <h3 data-en="Access control and audit" data-ko="권한과 감사 로그">Access control and audit</h3>
+            <p
+              data-en="Manage users, roles, detailed permissions, Redis connections, and access history."
+              data-ko="사용자, 역할, 세부 권한, Redis 연결과 접근 이력을 관리합니다."
+            >
+              Manage users, roles, detailed permissions, Redis connections, and access history.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section preview-section">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Interface" data-ko="인터페이스">Interface</p>
+          <h2 data-en="Built for long-running operational work." data-ko="운영 업무에 집중하도록 설계했습니다.">
+            Built for long-running operational work.
+          </h2>
+        </div>
+        <div class="preview-frame">
+          <img
+            src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-light-streams.png"
+            alt="StreamScope streams interface"
+            data-alt-en="StreamScope streams interface"
+            data-alt-ko="StreamScope 스트림 화면"
+          />
+        </div>
+      </section>
+
+      <section class="section" id="quick-start">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Quick start" data-ko="빠른 시작">Quick start</p>
+          <h2 data-en="Start first. Configure inside." data-ko="먼저 실행하고, 내부에서 설정하세요.">
+            Start first. Configure inside.
+          </h2>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <span>1</span>
+            <div>
+              <h3 data-en="Start StreamScope" data-ko="StreamScope 실행">Start StreamScope</h3>
+              <div class="code-row">
+                <code>docker compose up -d</code>
+                <button
+                  class="copy-button"
+                  type="button"
+                  data-copy="docker compose up -d"
+                  data-en="Copy"
+                  data-ko="복사"
+                  data-copied-en="Copied"
+                  data-copied-ko="복사됨"
+                >Copy</button>
+              </div>
+            </div>
+          </article>
+          <article class="step">
+            <span>2</span>
+            <div>
+              <h3 data-en="Sign in" data-ko="로그인">Sign in</h3>
+              <p><a href="http://localhost:8080">http://localhost:8080</a> · <code>admin / password</code></p>
+            </div>
+          </article>
+          <article class="step">
+            <span>3</span>
+            <div>
+              <h3 data-en="Connect Redis" data-ko="Redis 연결">Connect Redis</h3>
+              <p
+                data-en="Open Settings and add a standalone, Sentinel, or Cluster connection. Passwords are optional."
+                data-ko="Settings에서 standalone, Sentinel 또는 Cluster 연결을 추가합니다. 비밀번호는 선택 사항입니다."
+              >
+                Open Settings and add a standalone, Sentinel, or Cluster connection. Passwords are optional.
+              </p>
+            </div>
+          </article>
+        </div>
+        <aside class="host-note">
+          <strong data-en="Docker Desktop host Redis" data-ko="Docker Desktop 호스트의 Redis">
+            Docker Desktop host Redis
+          </strong>
+          <span
+            data-en="Use host.docker.internal:6379 instead of localhost:6379 on macOS and Windows."
+            data-ko="macOS와 Windows에서는 localhost:6379 대신 host.docker.internal:6379를 사용하세요."
+          >
+            Use host.docker.internal:6379 instead of localhost:6379 on macOS and Windows.
+          </span>
+        </aside>
+      </section>
+
+      <section class="section" id="configuration">
+        <div class="section-heading">
+          <p class="eyebrow" data-en="Configuration" data-ko="설정">Configuration</p>
+          <h2 data-en="Small by default, flexible when needed." data-ko="기본은 단순하게, 필요할 때 유연하게.">
+            Small by default, flexible when needed.
+          </h2>
+        </div>
+        <div class="configuration-grid">
+          <article>
+            <h3 data-en="Persistent settings" data-ko="설정 유지">Persistent settings</h3>
+            <p
+              data-en="Mount /data to retain application settings across container updates and restarts."
+              data-ko="/data 볼륨을 연결하면 컨테이너 업데이트와 재시작 후에도 설정이 유지됩니다."
+            >
+              Mount /data to retain application settings across container updates and restarts.
+            </p>
+          </article>
+          <article>
+            <h3 data-en="Startup configuration" data-ko="시작 설정">Startup configuration</h3>
+            <p
+              data-en="REDIS_HOST, REDIS_NODES, or REDIS_URL can create the first connection automatically."
+              data-ko="REDIS_HOST, REDIS_NODES 또는 REDIS_URL로 첫 연결을 자동 생성할 수 있습니다."
+            >
+              REDIS_HOST, REDIS_NODES, or REDIS_URL can create the first connection automatically.
+            </p>
+          </article>
+          <article>
+            <h3 data-en="Container port" data-ko="컨테이너 포트">Container port</h3>
+            <p
+              data-en="The internal port defaults to 8080. Map any host port with Docker, for example -p 9090:8080."
+              data-ko="내부 포트 기본값은 8080입니다. -p 9090:8080처럼 원하는 호스트 포트를 연결할 수 있습니다."
+            >
+              The internal port defaults to 8080. Map any host port with Docker, for example -p 9090:8080.
+            </p>
+          </article>
+        </div>
+        <div class="documentation-links">
+          <a href="https://github.com/ghkdqhrbals/streamscope#startup-environment-variables">
+            <span data-en="Environment variables" data-ko="환경 변수">Environment variables</span>
+            <span aria-hidden="true">→</span>
+          </a>
+          <a href="https://github.com/ghkdqhrbals/streamscope/blob/main/config.properties">
+            <span>config.properties</span>
+            <span aria-hidden="true">→</span>
+          </a>
+          <a href="https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope">
+            <span data-en="Container image" data-ko="컨테이너 이미지">Container image</span>
+            <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>StreamScope</span>
+      <span data-en="Redis Streams, clearly." data-ko="Redis Streams를 명확하게.">Redis Streams, clearly.</span>
+    </footer>
+  </body>
+</html>
