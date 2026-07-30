@@ -8,7 +8,9 @@ A lightweight, self-hosted operations console for Redis Streams.
 
 [Documentation](https://ghkdqhrbals.github.io/streamscope/) · [Container image](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
 
-![StreamScope overview](./design/streamscope-overview.png)
+<p align="center">
+  <img src="./design/streamscope-overview.png" alt="StreamScope overview" width="960">
+</p>
 
 ## Quick start
 
@@ -44,19 +46,15 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 
 ### Streams and messages
 
-![Streams and messages](./design/streamscope-streams.png)
-
-### Consumer groups
-
-![Consumer group activity](./design/streamscope-consumer-groups.png)
-
-### Redis connections
-
-![Redis connections](./design/streamscope-connections.png)
+<p align="center">
+  <img src="./design/streamscope-streams.png" alt="Streams and messages" width="960">
+</p>
 
 ### Roles and permissions
 
-![Roles and permissions](./design/streamscope-access-control.png)
+<p align="center">
+  <img src="./design/streamscope-access-control.png" alt="Roles and permissions" width="960">
+</p>
 
 ## Technology
 
