@@ -15,7 +15,7 @@
     />
     <meta
       property="og:image"
-      content="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-overview.png"
+      content="https://ghkdqhrbals.github.io/streamscope/assets/screenshots/overview.png"
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://ghkdqhrbals.github.io/streamscope/" />
@@ -158,6 +158,98 @@
               Manage users, roles, detailed permissions, Redis connections, and access history.
             </p>
           </article>
+        </div>
+        <div class="product-showcase">
+          <div class="showcase-tabs" role="tablist" aria-label="StreamScope screenshots">
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="showcase-overview"
+              data-showcase-tab="overview"
+              data-en="Overview"
+              data-ko="개요"
+            >Overview</button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="showcase-streams"
+              data-showcase-tab="streams"
+              data-en="Streams"
+              data-ko="스트림"
+            >Streams</button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="showcase-access"
+              data-showcase-tab="access"
+              data-en="Access control"
+              data-ko="접근 제어"
+            >Access control</button>
+          </div>
+          <div class="showcase-stage">
+            <a
+              id="showcase-overview"
+              role="tabpanel"
+              href="./assets/screenshots/overview.png"
+              target="_blank"
+              rel="noreferrer"
+              data-showcase-panel="overview"
+              aria-label="Open the full Overview screenshot"
+            >
+              <img
+                src="./assets/screenshots/overview.png"
+                alt="StreamScope overview with live Redis Streams performance charts"
+                data-alt-en="StreamScope overview with live Redis Streams performance charts"
+                data-alt-ko="Redis Streams 실시간 성능 차트를 보여주는 StreamScope 개요 화면"
+                width="1426"
+                height="1711"
+              />
+            </a>
+            <a
+              id="showcase-streams"
+              role="tabpanel"
+              href="./assets/screenshots/streams.png"
+              target="_blank"
+              rel="noreferrer"
+              data-showcase-panel="streams"
+              aria-label="Open the full Streams screenshot"
+              hidden
+            >
+              <img
+                src="./assets/screenshots/streams.png"
+                alt="StreamScope Streams workspace with messages, payload details, and consumer groups"
+                data-alt-en="StreamScope Streams workspace with messages, payload details, and consumer groups"
+                data-alt-ko="메시지, 페이로드 상세 정보와 컨슈머 그룹을 보여주는 StreamScope Streams 화면"
+                width="1426"
+                height="1711"
+                loading="lazy"
+              />
+            </a>
+            <a
+              id="showcase-access"
+              class="showcase-panel-wide"
+              role="tabpanel"
+              href="./assets/screenshots/access-control.png"
+              target="_blank"
+              rel="noreferrer"
+              data-showcase-panel="access"
+              aria-label="Open the full Access Control screenshot"
+              hidden
+            >
+              <img
+                src="./assets/screenshots/access-control.png"
+                alt="StreamScope user, role, permission, and access log management"
+                data-alt-en="StreamScope user, role, permission, and access log management"
+                data-alt-ko="StreamScope 사용자, 역할, 권한과 접근 로그 관리 화면"
+                width="1426"
+                height="587"
+                loading="lazy"
+              />
+            </a>
+          </div>
         </div>
       </section>
 

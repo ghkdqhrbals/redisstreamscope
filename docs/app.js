@@ -2,6 +2,8 @@ const languageButtons = document.querySelectorAll("[data-language]");
 const translatedElements = document.querySelectorAll("[data-en][data-ko]");
 const translatedImages = document.querySelectorAll("[data-alt-en][data-alt-ko]");
 const copyButtons = document.querySelectorAll("[data-copy]");
+const showcaseTabs = document.querySelectorAll("[data-showcase-tab]");
+const showcasePanels = document.querySelectorAll("[data-showcase-panel]");
 
 const savedLanguage = localStorage.getItem("streamscope-docs-language");
 const initialLanguage = savedLanguage === "ko" ? "ko" : "en";
@@ -56,6 +58,23 @@ copyButtons.forEach((button) => {
     } catch {
       button.textContent = button.dataset[activeLanguage];
     }
+  });
+});
+
+showcaseTabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const selectedShowcase = tab.dataset.showcaseTab;
+
+    showcaseTabs.forEach((candidate) => {
+      candidate.setAttribute(
+        "aria-selected",
+        String(candidate === tab),
+      );
+    });
+
+    showcasePanels.forEach((panel) => {
+      panel.hidden = panel.dataset.showcasePanel !== selectedShowcase;
+    });
   });
 });
 

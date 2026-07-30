@@ -161,6 +161,11 @@ footer {
   border-bottom: 1px solid var(--border);
 }
 
+.hero-copy,
+.terminal-card {
+  min-width: 0;
+}
+
 .eyebrow {
   margin: 0 0 15px;
   color: var(--muted);
@@ -237,6 +242,7 @@ h1 {
 }
 
 .terminal-card {
+  width: 100%;
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -359,6 +365,86 @@ h3 {
   color: var(--muted);
 }
 
+.product-showcase {
+  margin-top: 48px;
+}
+
+.showcase-tabs {
+  min-height: 54px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+}
+
+.showcase-tabs button {
+  min-height: 38px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.showcase-tabs button:hover {
+  color: var(--text);
+}
+
+.showcase-tabs button[aria-selected="true"] {
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.showcase-stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--surface);
+  box-shadow: 0 22px 58px rgba(0, 0, 0, 0.08);
+}
+
+.showcase-stage:has(.showcase-panel-wide:not([hidden])) {
+  aspect-ratio: 1426 / 587;
+}
+
+.showcase-stage a {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.showcase-stage a[hidden] {
+  display: none;
+}
+
+.showcase-stage img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: top center;
+  transition: transform 220ms ease;
+}
+
+.showcase-stage a:hover img {
+  transform: scale(1.006);
+}
+
+.showcase-stage .showcase-panel-wide img {
+  object-fit: contain;
+  object-position: center;
+}
+
 .steps {
   border-top: 1px solid var(--border-strong);
 }
@@ -471,6 +557,14 @@ footer span:first-child {
     gap: 14px;
   }
 
+  .wordmark {
+    flex: 0 0 auto;
+  }
+
+  .header-actions {
+    min-width: 0;
+  }
+
   .github-link {
     display: none;
   }
@@ -491,6 +585,17 @@ footer span:first-child {
     font-size: 16px;
   }
 
+  .terminal-card pre {
+    max-width: 100%;
+    padding: 26px 18px 32px;
+    font-size: 12px;
+  }
+
+  .terminal-card pre code {
+    display: block;
+    min-width: max-content;
+  }
+
   .section {
     padding: 76px 0;
   }
@@ -506,6 +611,18 @@ footer span:first-child {
   .feature-card {
     min-height: 220px;
     padding: 24px;
+  }
+
+  .product-showcase {
+    margin-top: 32px;
+  }
+
+  .showcase-tabs {
+    overflow-x: auto;
+  }
+
+  .showcase-tabs button {
+    flex: 0 0 auto;
   }
 
   .step {
