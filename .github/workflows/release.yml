@@ -38,6 +38,15 @@ jobs:
             exit 1
           fi
 
+      - name: Require the release registry token
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          if [[ -z "${GHCR_TOKEN:-}" ]]; then
+            echo "Repository secret GHCR_TOKEN is required to publish container images."
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v7
         with:
@@ -140,7 +149,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and publish container image
         uses: docker/build-push-action@v7
