@@ -1,4 +1,8 @@
-# StreamScope
+<p align="center">
+  <img src="./design/streamscope-logo-transparent.png" alt="StreamScope logo" width="128">
+</p>
+
+<h1 align="center">StreamScope</h1>
 
 Redis Streams did not have the focused monitoring experience we wanted: a clear, Kafka-console-style view of streams, messages, consumer groups, lag, and delivery health. That is why we built StreamScope.
 

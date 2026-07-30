@@ -88,10 +88,20 @@ button {
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   text-decoration: none;
   font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.035em;
+}
+
+.wordmark img {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .primary-nav {
@@ -544,6 +554,11 @@ footer span:first-child {
 
   .wordmark {
     flex: 0 0 auto;
+  }
+
+  .wordmark img {
+    width: 28px;
+    height: 28px;
   }
 
   .header-actions {
