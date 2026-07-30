@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="StreamScope is a lightweight, self-hosted Redis Streams operations console."
+      content="A focused monitoring UI for Redis Streams, built because we could not find one."
     />
     <meta name="theme-color" content="#ffffff" />
     <meta property="og:title" content="StreamScope" />
     <meta
       property="og:description"
-      content="A lightweight, self-hosted operations console for Redis Streams."
+      content="We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope."
     />
     <meta
       property="og:image"
@@ -31,10 +31,7 @@
         <a class="wordmark" href="#top" aria-label="StreamScope home">StreamScope</a>
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#features" data-en="Features" data-ko="기능">Features</a>
-          <a href="#compatibility" data-en="Compatibility" data-ko="호환성">Compatibility</a>
-          <a href="#technology" data-en="Technology" data-ko="기술">Technology</a>
           <a href="#quick-start" data-en="Quick start" data-ko="빠른 시작">Quick start</a>
-          <a href="#release" data-en="Release" data-ko="릴리스">Release</a>
         </nav>
         <div class="header-actions">
           <div class="language-switcher" role="group" aria-label="Language">
@@ -54,21 +51,21 @@
     <main id="main">
       <section class="hero" id="top">
         <div class="hero-copy">
-          <p class="eyebrow" data-en="StreamScope 2.0.0 · Redis Streams operations console" data-ko="StreamScope 2.0.0 · Redis Streams 운영 콘솔">
-            StreamScope 2.0.0 · Redis Streams operations console
+          <p class="eyebrow" data-en="Redis Streams monitoring UI" data-ko="Redis Streams 모니터링 UI">
+            Redis Streams monitoring UI
           </p>
           <h1
-            data-en="Run it. Connect Redis in the browser. Done."
-            data-ko="실행하고, 화면에서 Redis를 연결하면 끝입니다."
+            data-en="Redis Streams needed a proper monitoring UI."
+            data-ko="Redis Streams를 위한 제대로 된 모니터링 UI."
           >
-            Run it. Connect Redis in the browser. Done.
+            Redis Streams needed a proper monitoring UI.
           </h1>
           <p
             class="hero-description"
-            data-en="Start StreamScope with one Docker command. No config file first, no Redis options to memorize. Add your connection from Settings when the UI opens."
-            data-ko="Docker 명령어 한 줄로 시작하세요. 설정 파일도, 외워야 할 Redis 옵션도 없습니다. 화면이 열리면 Settings에서 연결만 추가하면 됩니다."
+            data-en="We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope. Start it with one Docker command, then connect Redis in the browser."
+            data-ko="Redis Streams만을 위해 만들어진 모니터링 UI를 찾을 수 없어 StreamScope를 직접 만들었습니다. Docker 명령어 한 줄로 실행하고 브라우저에서 Redis를 연결하세요."
           >
-            Start StreamScope with one Docker command. No config file first, no Redis options to memorize. Add your connection from Settings when the UI opens.
+            We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope. Start it with one Docker command, then connect Redis in the browser.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#quick-start" data-en="Run with Docker" data-ko="Docker로 실행">
@@ -90,7 +87,7 @@
             <button
               class="copy-button"
               type="button"
-              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0"
+              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
               data-en="Copy"
               data-ko="복사"
               data-copied-en="Copied"
@@ -101,7 +98,7 @@
   --name streamscope \
   -p 8080:8080 \
   -v streamscope-data:/data \
-  ghcr.io/ghkdqhrbals/streamscope:2.0.0</code></pre>
+  ghcr.io/ghkdqhrbals/streamscope:latest</code></pre>
           <div class="login-row">
             <span data-en="Open" data-ko="접속">Open</span>
             <a href="http://localhost:8080">localhost:8080</a>
@@ -164,170 +161,6 @@
         </div>
       </section>
 
-      <section class="section" id="compatibility">
-        <div class="section-heading">
-          <p class="eyebrow" data-en="Redis compatibility" data-ko="Redis 호환성">Redis compatibility</p>
-          <h2 data-en="Tested from Redis 6.2 through 8.8." data-ko="Redis 6.2부터 8.8까지 테스트합니다.">
-            Tested from Redis 6.2 through 8.8.
-          </h2>
-        </div>
-        <div class="compatibility-table" role="table" aria-label="Supported Redis versions">
-          <div class="compatibility-row compatibility-header" role="row">
-            <span role="columnheader" data-en="Version" data-ko="버전">Version</span>
-            <span role="columnheader" data-en="Status" data-ko="상태">Status</span>
-            <span role="columnheader" data-en="Details" data-ko="세부 사항">Details</span>
-          </div>
-          <div class="compatibility-row" role="row">
-            <code role="cell">6.2</code>
-            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
-            <span
-              role="cell"
-              data-en="Core Streams features, groups, pending entries, XCLAIM, and XAUTOCLAIM. Group lag and separate inactive time are not exposed by Redis."
-              data-ko="Streams 핵심 기능, 그룹, Pending 엔트리, XCLAIM, XAUTOCLAIM을 지원합니다. Redis가 그룹 지연과 별도 비활성 시간을 제공하지 않습니다."
-            >
-              Core Streams features, groups, pending entries, XCLAIM, and XAUTOCLAIM. Group lag and separate inactive time are not exposed by Redis.
-            </span>
-          </div>
-          <div class="compatibility-row" role="row">
-            <code role="cell">7.0</code>
-            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
-            <span
-              role="cell"
-              data-en="Adds consumer-group lag and entries-read metrics."
-              data-ko="컨슈머 그룹 지연과 entries-read 지표가 추가됩니다."
-            >
-              Adds consumer-group lag and entries-read metrics.
-            </span>
-          </div>
-          <div class="compatibility-row" role="row">
-            <code role="cell">7.2 · 7.4</code>
-            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
-            <span
-              role="cell"
-              data-en="Adds separate consumer inactive-time reporting. All current metrics are available."
-              data-ko="컨슈머 비활성 시간이 별도로 제공됩니다. 현재 모든 지표를 사용할 수 있습니다."
-            >
-              Adds separate consumer inactive-time reporting. All current metrics are available.
-            </span>
-          </div>
-          <div class="compatibility-row" role="row">
-            <code role="cell">8.0 · 8.2 · 8.4 · 8.6 · 8.8</code>
-            <span class="status" role="cell" data-en="CI tested" data-ko="CI 테스트">CI tested</span>
-            <span
-              role="cell"
-              data-en="All current StreamScope features and metrics are available."
-              data-ko="현재 StreamScope의 모든 기능과 지표를 사용할 수 있습니다."
-            >
-              All current StreamScope features and metrics are available.
-            </span>
-          </div>
-        </div>
-        <p
-          class="compatibility-note"
-          data-en="Each pull request tests the latest patch release in every listed version line. A new Redis version is supported only after it passes this matrix."
-          data-ko="모든 PR에서 각 버전 계열의 최신 패치 릴리스를 테스트합니다. 새로운 Redis 버전은 이 매트릭스를 통과한 후 지원 대상에 포함됩니다."
-        >
-          Each pull request tests the latest patch release in every listed version line. A new Redis version is supported only after it passes this matrix.
-        </p>
-      </section>
-
-      <section class="section preview-section">
-        <div class="section-heading">
-          <p class="eyebrow" data-en="Interface" data-ko="인터페이스">Interface</p>
-          <h2 data-en="Built for long-running operational work." data-ko="운영 업무에 집중하도록 설계했습니다.">
-            Built for long-running operational work.
-          </h2>
-        </div>
-        <div class="preview-grid">
-          <figure class="preview-frame">
-            <img
-              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-overview.png"
-              alt="StreamScope overview interface"
-              data-alt-en="StreamScope overview interface"
-              data-alt-ko="StreamScope 개요 화면"
-            />
-            <figcaption data-en="Overview across streams and consumer groups" data-ko="Streams와 Consumer Group 전체 개요">
-              Overview across streams and consumer groups
-            </figcaption>
-          </figure>
-          <figure class="preview-frame">
-            <img
-              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-streams.png"
-              alt="StreamScope streams interface"
-              data-alt-en="StreamScope streams interface"
-              data-alt-ko="StreamScope 스트림 화면"
-            />
-            <figcaption data-en="Streams, entries, and consumer groups" data-ko="Streams, 엔트리, Consumer Group">
-              Streams, entries, and consumer groups
-            </figcaption>
-          </figure>
-          <figure class="preview-frame">
-            <img
-              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-consumer-groups.png"
-              alt="StreamScope consumer groups interface"
-              data-alt-en="StreamScope consumer groups interface"
-              data-alt-ko="StreamScope Consumer Group 화면"
-            />
-            <figcaption data-en="Consumer activity, pending entries, lag, and ownership" data-ko="Consumer 활동, Pending, Lag, 소유권">
-              Consumer activity, pending entries, lag, and ownership
-            </figcaption>
-          </figure>
-          <figure class="preview-frame">
-            <img
-              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-connections.png"
-              alt="StreamScope Redis connections interface"
-              data-alt-en="StreamScope Redis connections interface"
-              data-alt-ko="StreamScope Redis 연결 화면"
-            />
-            <figcaption data-en="Check, reconfigure, or remove Redis connections" data-ko="Redis 연결 상태 확인, 재설정, 삭제">
-              Check, reconfigure, or remove Redis connections
-            </figcaption>
-          </figure>
-          <figure class="preview-frame">
-            <img
-              src="https://raw.githubusercontent.com/ghkdqhrbals/streamscope/main/design/streamscope-access-control.png"
-              alt="StreamScope roles and permissions interface"
-              data-alt-en="StreamScope roles and permissions interface"
-              data-alt-ko="StreamScope 역할과 권한 화면"
-            />
-            <figcaption data-en="Built-in roles and resource permissions" data-ko="내장 역할과 리소스 권한">
-              Built-in roles and resource permissions
-            </figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section class="section" id="technology">
-        <div class="section-heading">
-          <p class="eyebrow" data-en="Technology" data-ko="기술">Technology</p>
-          <h2 data-en="Small runtime. Familiar tools." data-ko="작은 런타임, 익숙한 기술.">
-            Small runtime. Familiar tools.
-          </h2>
-        </div>
-        <div class="technology-grid">
-          <article>
-            <span>Backend</span>
-            <strong>Go 1.25</strong>
-            <p>go-redis v9</p>
-          </article>
-          <article>
-            <span>Frontend</span>
-            <strong>React 19</strong>
-            <p>TypeScript 5.9 · Vite 7</p>
-          </article>
-          <article>
-            <span>Storage</span>
-            <strong>SQLite</strong>
-            <p>Embedded · WAL</p>
-          </article>
-          <article>
-            <span>Container</span>
-            <strong>Distroless</strong>
-            <p>linux/amd64 · linux/arm64</p>
-          </article>
-        </div>
-      </section>
-
       <section class="section" id="quick-start">
         <div class="section-heading">
           <p class="eyebrow" data-en="Quick start" data-ko="빠른 시작">Quick start</p>
@@ -341,11 +174,11 @@
             <div>
               <h3 data-en="Start StreamScope" data-ko="StreamScope 실행">Start StreamScope</h3>
               <div class="code-row">
-                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0</code>
+                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest</code>
                 <button
                   class="copy-button"
                   type="button"
-                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:2.0.0"
+                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
                   data-en="Copy"
                   data-ko="복사"
                   data-copied-en="Copied"
@@ -387,31 +220,6 @@
         </aside>
       </section>
 
-      <section class="section" id="release">
-        <div class="section-heading">
-          <p class="eyebrow" data-en="Release" data-ko="릴리스">Release</p>
-          <h2 data-en="StreamScope 2.0.0" data-ko="StreamScope 2.0.0">
-            StreamScope 2.0.0
-          </h2>
-        </div>
-        <div class="release-card">
-          <div>
-            <span data-en="Current release" data-ko="현재 릴리스">Current release</span>
-            <strong>v2.0.0</strong>
-          </div>
-          <code>ghcr.io/ghkdqhrbals/streamscope:2.0.0</code>
-        </div>
-        <div class="documentation-links">
-          <a href="https://github.com/ghkdqhrbals/streamscope/releases/tag/v2.0.0">
-            <span data-en="Release notes" data-ko="릴리스 노트">Release notes</span>
-            <span aria-hidden="true">→</span>
-          </a>
-          <a href="https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope">
-            <span data-en="Container image" data-ko="컨테이너 이미지">Container image</span>
-            <span aria-hidden="true">→</span>
-          </a>
-        </div>
-      </section>
     </main>
 
     <footer>

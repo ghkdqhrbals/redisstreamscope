@@ -353,133 +353,10 @@ h3 {
 }
 
 .feature-card p:last-child,
-.configuration-grid p,
 .step p {
   max-width: 530px;
   margin-bottom: 0;
   color: var(--muted);
-}
-
-.preview-section {
-  overflow: hidden;
-}
-
-.compatibility-table {
-  border-top: 1px solid var(--border-strong);
-}
-
-.compatibility-row {
-  min-height: 78px;
-  padding: 18px 4px;
-  border-bottom: 1px solid var(--border);
-  display: grid;
-  grid-template-columns: 190px 130px minmax(0, 1fr);
-  align-items: center;
-  gap: 24px;
-}
-
-.compatibility-row code {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.compatibility-row > span:last-child {
-  color: var(--muted);
-}
-
-.compatibility-header {
-  min-height: 54px;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.status {
-  width: fit-content;
-  padding: 3px 8px;
-  border: 1px solid #b8d7c2;
-  border-radius: 999px;
-  background: #f3faf5;
-  color: var(--success) !important;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.compatibility-note {
-  max-width: 820px;
-  margin: 26px 0 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.preview-grid {
-  display: grid;
-  gap: 28px;
-}
-
-.preview-frame {
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-}
-
-.preview-frame img {
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: block;
-  background: #ffffff;
-}
-
-.preview-frame figcaption {
-  padding: 13px 4px 2px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.technology-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid var(--border);
-  border-left: 1px solid var(--border);
-}
-
-.technology-grid article {
-  min-height: 180px;
-  padding: 28px;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-}
-
-.technology-grid span {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.technology-grid strong {
-  margin-top: auto;
-  font-size: 24px;
-  letter-spacing: -0.035em;
-}
-
-.technology-grid p {
-  margin: 3px 0 0;
-  color: var(--muted);
-  font-size: 14px;
 }
 
 .steps {
@@ -546,80 +423,6 @@ h3 {
   color: var(--muted);
 }
 
-.configuration-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  border: 1px solid var(--border);
-  background: var(--border);
-}
-
-.configuration-grid article {
-  min-height: 225px;
-  padding: 28px;
-  background: #ffffff;
-}
-
-.documentation-links {
-  margin-top: 28px;
-  border-top: 1px solid var(--border);
-}
-
-.release-card {
-  min-height: 118px;
-  padding: 24px 28px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 28px;
-  background: var(--surface);
-}
-
-.release-card > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.release-card span {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.release-card strong {
-  font-size: 28px;
-  letter-spacing: -0.04em;
-}
-
-.release-card code {
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
-}
-
-.documentation-links a {
-  min-height: 62px;
-  padding: 0 4px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.documentation-links a:hover {
-  padding-left: 10px;
-  padding-right: 10px;
-  background: var(--surface);
-}
-
 footer {
   min-height: 120px;
   display: flex;
@@ -650,17 +453,6 @@ footer span:first-child {
     max-width: 640px;
   }
 
-  .configuration-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .configuration-grid article {
-    min-height: 0;
-  }
-
-  .technology-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 640px) {
@@ -711,15 +503,6 @@ footer span:first-child {
     grid-template-columns: 1fr;
   }
 
-  .compatibility-row {
-    grid-template-columns: 1fr;
-    gap: 7px;
-  }
-
-  .compatibility-header {
-    display: none;
-  }
-
   .feature-card {
     min-height: 220px;
     padding: 24px;
@@ -733,24 +516,6 @@ footer span:first-child {
   .host-note {
     grid-template-columns: 1fr;
     gap: 6px;
-  }
-
-  .technology-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .technology-grid article {
-    min-height: 150px;
-  }
-
-  .release-card {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .release-card code {
-    max-width: 100%;
-    overflow-x: auto;
   }
 
   footer {
