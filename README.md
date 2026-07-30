@@ -8,10 +8,6 @@ A lightweight, self-hosted operations console for Redis Streams.
 
 [Documentation](https://ghkdqhrbals.github.io/streamscope/) · [Container image](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
 
-<p align="center">
-  <img src="./design/streamscope-overview.png" alt="StreamScope overview" width="960">
-</p>
-
 ## Quick start
 
 ```sh
@@ -43,6 +39,12 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 - Switch between English and Korean.
 
 ## Screenshots
+
+### Overview
+
+<p align="center">
+  <img src="./design/streamscope-overview.png" alt="StreamScope overview" width="960">
+</p>
 
 ### Streams and messages
 
