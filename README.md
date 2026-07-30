@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./design/streamscope-logo-transparent.png" alt="StreamScope logo" width="128">
+  <img src="./design/streamscope-logo.png" alt="StreamScope logo" width="128">
 </p>
 
 <h1 align="center">StreamScope</h1>
