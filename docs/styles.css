@@ -494,21 +494,6 @@ h3 {
   font-size: 14px;
 }
 
-.host-note {
-  margin-top: 32px;
-  padding: 20px 22px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 26px;
-  background: var(--surface);
-}
-
-.host-note span {
-  color: var(--muted);
-}
-
 footer {
   min-height: 120px;
   display: flex;
@@ -628,11 +613,6 @@ footer span:first-child {
   .step {
     grid-template-columns: 40px 1fr;
     gap: 12px;
-  }
-
-  .host-note {
-    grid-template-columns: 1fr;
-    gap: 6px;
   }
 
   footer {
