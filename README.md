@@ -1,12 +1,8 @@
 # StreamScope
 
-A lightweight, self-hosted operations console for Redis Streams.
+Redis Streams did not have the focused monitoring experience we wanted: a clear, Kafka-console-style view of streams, messages, consumer groups, lag, and delivery health. That is why we built StreamScope.
 
-[![Release](https://img.shields.io/badge/release-v2.0.0-111111)](https://github.com/ghkdqhrbals/streamscope/releases/tag/v2.0.0)
-[![Container](https://img.shields.io/badge/GHCR-streamscope-111111)](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
-[![Redis](https://img.shields.io/badge/Redis-6.2%2B-111111)](#redis-compatibility)
-
-[Documentation](https://ghkdqhrbals.github.io/streamscope/) · [Container image](https://github.com/ghkdqhrbals/streamscope/pkgs/container/streamscope)
+StreamScope is for developers and operators who want to inspect Redis Streams, follow consumer activity, diagnose lag, and manage access from one lightweight, self-hosted interface.
 
 ## Quick start
 
@@ -25,7 +21,7 @@ Username: admin
 Password: password
 ```
 
-Open **Settings → Redis connections**, add your Redis server, test the connection, and save it. If Redis runs on your macOS or Windows host, use `host.docker.internal:6379`.
+Open **Settings → Redis connections**, add your Redis server, test the connection, and save it.
 
 ## Features
 
@@ -79,14 +75,3 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 | `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | All current StreamScope features and metrics |
 
 Every pull request runs the integration suite against the latest patch release in each listed Redis version line.
-
-## Release
-
-Current release: **v2.0.0**
-
-```text
-ghcr.io/ghkdqhrbals/streamscope:2.0.0
-ghcr.io/ghkdqhrbals/streamscope:2.0
-ghcr.io/ghkdqhrbals/streamscope:2
-ghcr.io/ghkdqhrbals/streamscope:latest
-```
