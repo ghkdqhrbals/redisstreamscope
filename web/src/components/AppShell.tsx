@@ -21,6 +21,10 @@ import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Page, RedisConnection, StreamItem } from "../types";
 import { LanguageSelect, useI18n } from "../i18n";
+import { readMigratedStorage } from "../storage";
+
+const SIDEBAR_STORAGE_KEY = "redisstreamscope:sidebar-collapsed:v1";
+const LEGACY_SIDEBAR_STORAGE_KEY = "streamscope:sidebar-collapsed:v1";
 
 type AppShellProps = {
   page: Page;
@@ -62,7 +66,9 @@ export function AppShell({
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("streamscope:sidebar-collapsed:v1") === "true");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    readMigratedStorage(window.localStorage, SIDEBAR_STORAGE_KEY, LEGACY_SIDEBAR_STORAGE_KEY) === "true",
+  );
   const commandInputRef = useRef<HTMLInputElement>(null);
   const deferredStreamFilter = useDeferredValue(streamFilter.trim().toLowerCase());
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
@@ -91,11 +97,11 @@ export function AppShell({
       });
     };
     loadConnections();
-    window.addEventListener("streamscope:connections-changed", loadConnections);
-    window.addEventListener("streamscope:streams-changed", loadConnections);
+    window.addEventListener("redisstreamscope:connections-changed", loadConnections);
+    window.addEventListener("redisstreamscope:streams-changed", loadConnections);
     return () => {
-      window.removeEventListener("streamscope:connections-changed", loadConnections);
-      window.removeEventListener("streamscope:streams-changed", loadConnections);
+      window.removeEventListener("redisstreamscope:connections-changed", loadConnections);
+      window.removeEventListener("redisstreamscope:streams-changed", loadConnections);
     };
   }, []);
 
@@ -122,7 +128,7 @@ export function AppShell({
   }, [commandOpen]);
 
   useEffect(() => {
-    window.localStorage.setItem("streamscope:sidebar-collapsed:v1", String(sidebarCollapsed));
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
   const navigate = (nextPage: Page) => {
@@ -158,7 +164,7 @@ export function AppShell({
         </button>
         <button className="wordmark" onClick={() => onNavigate("overview")} aria-label={t("Open overview")}>
           <span className="brand-mark"><Layers3 size={18} /></span>
-          <strong>StreamScope</strong>
+          <strong>RedisStreamScope</strong>
         </button>
         <div className="connection-select">
           <Database size={14} />

@@ -16,20 +16,23 @@
       content="A focused monitoring UI for Redis Streams, built because we could not find one."
     />
     <meta name="theme-color" content="#ffffff" />
-    <meta property="og:title" content="StreamScope" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://ghkdqhrbals.github.io/redisstreamscope/" />
+    <link rel="sitemap" type="application/xml" href="./sitemap.xml" />
+    <meta property="og:title" content="RedisStreamScope" />
     <meta
       property="og:description"
-      content="We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope."
+      content="We could not find a monitoring UI made specifically for Redis Streams, so we built RedisStreamScope."
     />
     <meta
       property="og:image"
-      content="https://ghkdqhrbals.github.io/streamscope/assets/screenshots/overview.png"
+      content="https://ghkdqhrbals.github.io/redisstreamscope/assets/screenshots/overview.png"
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://ghkdqhrbals.github.io/streamscope/" />
-    <title>StreamScope — Redis Streams Console</title>
-    <link rel="icon" type="image/png" href="./assets/streamscope-logo.png" />
-    <link rel="apple-touch-icon" href="./assets/streamscope-logo.png" />
+    <meta property="og:url" content="https://ghkdqhrbals.github.io/redisstreamscope/" />
+    <title>RedisStreamScope — Redis Streams Console</title>
+    <link rel="icon" type="image/png" href="./assets/redisstreamscope-logo.png" />
+    <link rel="apple-touch-icon" href="./assets/redisstreamscope-logo.png" />
     <link rel="stylesheet" href="./styles.css" />
     <script src="./app.js" defer></script>
   </head>
@@ -38,9 +41,9 @@
 
     <header class="site-header">
       <div class="header-inner">
-        <a class="wordmark" href="#top" aria-label="StreamScope home">
-          <img src="./assets/streamscope-logo.png" alt="" width="32" height="32" />
-          <span>StreamScope</span>
+        <a class="wordmark" href="#top" aria-label="RedisStreamScope home">
+          <img src="./assets/redisstreamscope-logo.png" alt="" width="32" height="32" />
+          <span>RedisStreamScope</span>
         </a>
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#features" data-en="Features" data-ko="기능">Features</a>
@@ -53,7 +56,7 @@
           </div>
           <a
             class="github-link"
-            href="https://github.com/ghkdqhrbals/streamscope"
+            href="https://github.com/ghkdqhrbals/redisstreamscope"
             data-en="GitHub"
             data-ko="GitHub"
           >GitHub</a>
@@ -75,10 +78,10 @@
           </h1>
           <p
             class="hero-description"
-            data-en="We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope. Start it with one Docker command, then connect Redis in the browser."
-            data-ko="Redis Streams만을 위해 만들어진 모니터링 UI를 찾을 수 없어 StreamScope를 직접 만들었습니다. Docker 명령어 한 줄로 실행하고 브라우저에서 Redis를 연결하세요."
+            data-en="We could not find a monitoring UI made specifically for Redis Streams, so we built RedisStreamScope. Start it with one Docker command, then connect Redis in the browser."
+            data-ko="Redis Streams만을 위해 만들어진 모니터링 UI를 찾을 수 없어 RedisStreamScope를 직접 만들었습니다. Docker 명령어 한 줄로 실행하고 브라우저에서 Redis를 연결하세요."
           >
-            We could not find a monitoring UI made specifically for Redis Streams, so we built StreamScope. Start it with one Docker command, then connect Redis in the browser.
+            We could not find a monitoring UI made specifically for Redis Streams, so we built RedisStreamScope. Start it with one Docker command, then connect Redis in the browser.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#quick-start" data-en="Run with Docker" data-ko="Docker로 실행">
@@ -86,7 +89,7 @@
             </a>
             <a
               class="button button-secondary"
-              href="https://github.com/ghkdqhrbals/streamscope"
+              href="https://github.com/ghkdqhrbals/redisstreamscope"
               data-en="View source"
               data-ko="소스 보기"
             >
@@ -100,7 +103,7 @@
             <button
               class="copy-button"
               type="button"
-              data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
+              data-copy="docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest"
               data-en="Copy"
               data-ko="복사"
               data-copied-en="Copied"
@@ -108,10 +111,10 @@
             >Copy</button>
           </div>
           <pre><code>docker run -d \
-  --name streamscope \
+  --name redisstreamscope \
   -p 8080:8080 \
-  -v streamscope-data:/data \
-  ghcr.io/ghkdqhrbals/streamscope:latest</code></pre>
+  -v redisstreamscope-data:/data \
+  ghcr.io/ghkdqhrbals/redisstreamscope:latest</code></pre>
           <div class="login-row">
             <span data-en="Open" data-ko="접속">Open</span>
             <a href="http://localhost:8080">localhost:8080</a>
@@ -173,7 +176,7 @@
           </article>
         </div>
         <div class="product-showcase">
-          <div class="showcase-tabs" role="tablist" aria-label="StreamScope screenshots">
+          <div class="showcase-tabs" role="tablist" aria-label="RedisStreamScope screenshots">
             <button
               type="button"
               role="tab"
@@ -214,9 +217,9 @@
             >
               <img
                 src="./assets/screenshots/overview.png"
-                alt="StreamScope overview with live Redis Streams performance charts"
-                data-alt-en="StreamScope overview with live Redis Streams performance charts"
-                data-alt-ko="Redis Streams 실시간 성능 차트를 보여주는 StreamScope 개요 화면"
+                alt="RedisStreamScope overview with live Redis Streams performance charts"
+                data-alt-en="RedisStreamScope overview with live Redis Streams performance charts"
+                data-alt-ko="Redis Streams 실시간 성능 차트를 보여주는 RedisStreamScope 개요 화면"
                 width="1426"
                 height="1711"
               />
@@ -233,9 +236,9 @@
             >
               <img
                 src="./assets/screenshots/streams.png"
-                alt="StreamScope Streams workspace with messages, payload details, and consumer groups"
-                data-alt-en="StreamScope Streams workspace with messages, payload details, and consumer groups"
-                data-alt-ko="메시지, 페이로드 상세 정보와 컨슈머 그룹을 보여주는 StreamScope Streams 화면"
+                alt="RedisStreamScope Streams workspace with messages, payload details, and consumer groups"
+                data-alt-en="RedisStreamScope Streams workspace with messages, payload details, and consumer groups"
+                data-alt-ko="메시지, 페이로드 상세 정보와 컨슈머 그룹을 보여주는 RedisStreamScope Streams 화면"
                 width="1426"
                 height="1711"
                 loading="lazy"
@@ -254,9 +257,9 @@
             >
               <img
                 src="./assets/screenshots/access-control.png"
-                alt="StreamScope user, role, permission, and access log management"
-                data-alt-en="StreamScope user, role, permission, and access log management"
-                data-alt-ko="StreamScope 사용자, 역할, 권한과 접근 로그 관리 화면"
+                alt="RedisStreamScope user, role, permission, and access log management"
+                data-alt-en="RedisStreamScope user, role, permission, and access log management"
+                data-alt-ko="RedisStreamScope 사용자, 역할, 권한과 접근 로그 관리 화면"
                 width="1426"
                 height="587"
                 loading="lazy"
@@ -277,13 +280,13 @@
           <article class="step">
             <span>1</span>
             <div>
-              <h3 data-en="Start StreamScope" data-ko="StreamScope 실행">Start StreamScope</h3>
+              <h3 data-en="Start RedisStreamScope" data-ko="RedisStreamScope 실행">Start RedisStreamScope</h3>
               <div class="code-row">
-                <code>docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest</code>
+                <code>docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest</code>
                 <button
                   class="copy-button"
                   type="button"
-                  data-copy="docker run -d --name streamscope -p 8080:8080 -v streamscope-data:/data ghcr.io/ghkdqhrbals/streamscope:latest"
+                  data-copy="docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest"
                   data-en="Copy"
                   data-ko="복사"
                   data-copied-en="Copied"
@@ -317,9 +320,9 @@
     </main>
 
     <footer>
-      <span>StreamScope</span>
+      <span>RedisStreamScope</span>
       <a
-        href="https://github.com/ghkdqhrbals/streamscope/blob/main/LICENSE"
+        href="https://github.com/ghkdqhrbals/redisstreamscope/blob/main/LICENSE"
         data-en="Noncommercial license"
         data-ko="비상업용 라이선스"
       >Noncommercial license</a>

@@ -11,7 +11,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const sessionCookieName = "streamscope_session"
+const (
+	sessionCookieName       = "redisstreamscope_session"
+	legacySessionCookieName = "streamscope_session"
+)
 
 type loginWindow struct {
 	Attempts int
@@ -39,7 +42,7 @@ func (a *authenticator) login(ctx context.Context, username, password, ip, userA
 }
 
 func (a *authenticator) session(request *http.Request) (sessionRecord, error) {
-	cookie, err := request.Cookie(sessionCookieName)
+	cookie, err := authenticationCookie(request)
 	if err != nil {
 		return sessionRecord{}, err
 	}
@@ -47,8 +50,15 @@ func (a *authenticator) session(request *http.Request) (sessionRecord, error) {
 }
 
 func (a *authenticator) logout(request *http.Request) {
-	if cookie, err := request.Cookie(sessionCookieName); err == nil {
-		a.store.deleteSession(request.Context(), cookie.Value)
+	seen := make(map[string]struct{}, 2)
+	for _, name := range []string{sessionCookieName, legacySessionCookieName} {
+		if cookie, err := request.Cookie(name); err == nil {
+			if _, exists := seen[cookie.Value]; exists {
+				continue
+			}
+			seen[cookie.Value] = struct{}{}
+			a.store.deleteSession(request.Context(), cookie.Value)
+		}
 	}
 }
 
@@ -66,10 +76,23 @@ func (a *authenticator) setCookie(writer http.ResponseWriter, token string, expi
 }
 
 func (a *authenticator) clearCookie(writer http.ResponseWriter) {
-	http.SetCookie(writer, &http.Cookie{
-		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: a.config.SecureCookies, SameSite: http.SameSiteStrictMode,
-	})
+	for _, name := range []string{sessionCookieName, legacySessionCookieName} {
+		http.SetCookie(writer, &http.Cookie{
+			Name: name, Value: "", Path: "/", MaxAge: -1,
+			HttpOnly: true, Secure: a.config.SecureCookies, SameSite: http.SameSiteStrictMode,
+		})
+	}
+}
+
+func authenticationCookie(request *http.Request) (*http.Cookie, error) {
+	cookie, err := request.Cookie(sessionCookieName)
+	if err == nil {
+		return cookie, nil
+	}
+	if !errors.Is(err, http.ErrNoCookie) {
+		return nil, err
+	}
+	return request.Cookie(legacySessionCookieName)
 }
 
 func (a *authenticator) allowLogin(request *http.Request) bool {

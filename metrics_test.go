@@ -24,7 +24,7 @@ func TestObservedConsumeDelayOnlyChangesWhenDeliveryAdvances(t *testing.T) {
 }
 
 func TestMetricSamplesAggregateAndFilterByStream(t *testing.T) {
-	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)
 	if err != nil {
 		t.Fatal(err)

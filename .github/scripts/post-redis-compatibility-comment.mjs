@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const marker = "<!-- streamscope-redis-compatibility-results -->";
+const marker = "<!-- redisstreamscope-redis-compatibility-results -->";
 const redisSeries = ["6.2", "7.0", "7.2", "7.4", "8.0", "8.2", "8.4", "8.6", "8.8"];
 const resultDirectory = process.env.REDIS_RESULTS_DIR || "redis-results";
 

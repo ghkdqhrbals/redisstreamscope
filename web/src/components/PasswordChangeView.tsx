@@ -7,7 +7,7 @@ export function PasswordChangeView({ username, onChanged }: { username: string; 
   return (
     <main className="password-change-page">
       <section className="password-change-card">
-        <div className="password-change-brand"><span className="brand-mark"><Layers3 size={18} /></span><strong>StreamScope</strong></div>
+        <div className="password-change-brand"><span className="brand-mark"><Layers3 size={18} /></span><strong>RedisStreamScope</strong></div>
         <div className="login-icon"><KeyRound size={22} /></div>
         <h1>{t("Password update required")}</h1>
         <p><strong>{username}</strong> · {t("Change the initial password before continuing.")}</p>

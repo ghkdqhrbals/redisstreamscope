@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -42,9 +43,14 @@ func main() {
 		_, _ = fmt.Print(renderProperties(config, true))
 		return
 	}
+	if strings.TrimSpace(os.Getenv("DATA_PATH")) == "" && config.DataPath == defaultDataPath {
+		if err := migrateLegacyDatabase(legacyDefaultDataPath, defaultDataPath); err != nil {
+			log.Fatalf("migrate legacy database: %v", err)
+		}
+	}
 	store, err := openStore(config)
 	if err != nil {
-		log.Fatalf("open StreamScope database: %v", err)
+		log.Fatalf("open RedisStreamScope database: %v", err)
 	}
 	defer store.close()
 	if err := ensureDefaultAdmin(store); err != nil {
@@ -73,7 +79,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf(`{"level":"info","message":"StreamScope started","addr":%q}`, config.Addr)
+		log.Printf(`{"level":"info","message":"RedisStreamScope started","addr":%q}`, config.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("HTTP server: %v", err)
 		}

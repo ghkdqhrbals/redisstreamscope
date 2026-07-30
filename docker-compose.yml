@@ -1,12 +1,12 @@
 services:
-  streamscope:
-    container_name: streamscope
-    image: ghcr.io/ghkdqhrbals/streamscope:latest
+  redisstreamscope:
+    container_name: redisstreamscope
+    image: ghcr.io/ghkdqhrbals/redisstreamscope:latest
     ports:
       - "8080:8080"
     volumes:
-      - streamscope-data:/data
+      - redisstreamscope-data:/data
     restart: unless-stopped
 
 volumes:
-  streamscope-data:
+  redisstreamscope-data:

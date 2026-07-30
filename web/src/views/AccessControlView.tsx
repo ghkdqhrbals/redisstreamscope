@@ -330,7 +330,7 @@ function formatTime(value: string, locale: string) {
 }
 
 function exportAuditLogs(logs: Array<Record<string, string | number>>) {
-  downloadCSV("streamscope-audit-logs.csv", ["createdAt", "username", "method", "path", "action", "scope", "status", "durationMs", "ip", "requestId"], logs);
+  downloadCSV("redisstreamscope-audit-logs.csv", ["createdAt", "username", "method", "path", "action", "scope", "status", "durationMs", "ip", "requestId"], logs);
 }
 
 function exportPermissionReport(users: AccessUser[], grants: Grant[]) {
@@ -341,7 +341,7 @@ function exportPermissionReport(users: AccessUser[], grants: Grant[]) {
       ...userGrants.map((grant) => ({ username: user.username, displayName: user.displayName, role: user.role, enabled: user.enabled, action: grant.action, scope: grant.scope, effect: grant.effect })),
     ];
   });
-  downloadCSV("streamscope-permissions.csv", ["username", "displayName", "role", "enabled", "action", "scope", "effect"], rows);
+  downloadCSV("redisstreamscope-permissions.csv", ["username", "displayName", "role", "enabled", "action", "scope", "effect"], rows);
 }
 
 function downloadCSV(filename: string, columns: string[], rows: Array<Record<string, unknown>>) {

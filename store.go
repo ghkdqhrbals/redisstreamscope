@@ -73,6 +73,52 @@ type store struct {
 	db *sql.DB
 }
 
+func migrateLegacyDatabase(legacyPath, currentPath string) error {
+	if legacyPath == currentPath {
+		return nil
+	}
+	if _, err := os.Stat(currentPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect current database: %w", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect legacy database: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(currentPath), 0o750); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+
+	type migration struct {
+		from string
+		to   string
+	}
+	moved := make([]migration, 0, 3)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		from := legacyPath + suffix
+		to := currentPath + suffix
+		if suffix != "" {
+			if _, err := os.Stat(from); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return fmt.Errorf("inspect legacy database companion %s: %w", suffix, err)
+			}
+		}
+		if err := os.Rename(from, to); err != nil {
+			for index := len(moved) - 1; index >= 0; index-- {
+				_ = os.Rename(moved[index].to, moved[index].from)
+			}
+			return fmt.Errorf("move legacy database%s: %w", suffix, err)
+		}
+		moved = append(moved, migration{from: from, to: to})
+	}
+	return nil
+}
+
 func openStore(config appConfig) (*store, error) {
 	if err := os.MkdirAll(filepath.Dir(config.DataPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)

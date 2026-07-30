@@ -5,7 +5,13 @@ const copyButtons = document.querySelectorAll("[data-copy]");
 const showcaseTabs = document.querySelectorAll("[data-showcase-tab]");
 const showcasePanels = document.querySelectorAll("[data-showcase-panel]");
 
-const savedLanguage = localStorage.getItem("streamscope-docs-language");
+const languageStorageKey = "redisstreamscope-docs-language";
+const legacyLanguageStorageKey = "streamscope-docs-language";
+const savedLanguage = localStorage.getItem(languageStorageKey) ?? localStorage.getItem(legacyLanguageStorageKey);
+if (savedLanguage !== null && localStorage.getItem(languageStorageKey) === null) {
+  localStorage.setItem(languageStorageKey, savedLanguage);
+  localStorage.removeItem(legacyLanguageStorageKey);
+}
 const initialLanguage = savedLanguage === "ko" ? "ko" : "en";
 let activeLanguage = initialLanguage;
 
@@ -14,8 +20,8 @@ function setLanguage(language) {
   document.documentElement.lang = activeLanguage;
   document.title =
     activeLanguage === "ko"
-      ? "StreamScope — Redis Streams 콘솔"
-      : "StreamScope — Redis Streams Console";
+      ? "RedisStreamScope — Redis Streams 콘솔"
+      : "RedisStreamScope — Redis Streams Console";
 
   translatedElements.forEach((element) => {
     element.textContent = element.dataset[activeLanguage];
@@ -32,7 +38,7 @@ function setLanguage(language) {
     );
   });
 
-  localStorage.setItem("streamscope-docs-language", activeLanguage);
+  localStorage.setItem(languageStorageKey, activeLanguage);
 }
 
 languageButtons.forEach((button) => {

@@ -1,8 +1,10 @@
 import { GripVertical } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../i18n";
+import { readMigratedStorage } from "../storage";
 
-const STORAGE_KEY = "streamscope:inspector-width:v1";
+const STORAGE_KEY = "redisstreamscope:inspector-width:v1";
+const LEGACY_STORAGE_KEY = "streamscope:inspector-width:v1";
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 720;
 
@@ -19,7 +21,7 @@ export function InspectorResizeHandle() {
   useEffect(() => {
     const panel = handleRef.current?.parentElement;
     if (!panel) return;
-    const stored = Number(window.localStorage.getItem(STORAGE_KEY));
+    const stored = Number(readMigratedStorage(window.localStorage, STORAGE_KEY, LEGACY_STORAGE_KEY));
     if (Number.isFinite(stored) && stored >= MIN_WIDTH) panel.style.width = `${clampWidth(stored)}px`;
   }, []);
 

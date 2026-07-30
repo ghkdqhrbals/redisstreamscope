@@ -1,15 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { readMigratedStorage } from "./storage";
 
 export type Language = "en" | "ko";
 type Variables = Record<string, string | number>;
 
-const STORAGE_KEY = "streamscope:language:v1";
+const STORAGE_KEY = "redisstreamscope:language:v1";
+const LEGACY_STORAGE_KEY = "streamscope:language:v1";
 
 const korean: Record<string, string> = {
   "English": "영어",
   "Korean": "한국어",
   "Language": "언어",
-  "Preparing StreamScope…": "StreamScope 준비 중…",
+  "Preparing RedisStreamScope…": "RedisStreamScope 준비 중…",
   "Redis Streams, clearly operational.": "Redis Streams를 명확하게 운영하세요.",
   "Live operations": "실시간 운영",
   "Your Redis connection": "Redis 연결",
@@ -248,7 +250,7 @@ const korean: Record<string, string> = {
   "Review": "검토",
   "Complete": "완료",
   "In progress": "진행 중",
-  "Set up StreamScope": "StreamScope 설정",
+  "Set up RedisStreamScope": "RedisStreamScope 설정",
   "The container is ready. Configure the administrator account and Redis connection in your browser.": "컨테이너는 준비되었습니다. 이제 관리자 계정과 실제 Redis 연결을 브라우저 안에서 구성합니다.",
   "Administrator account": "관리자 계정",
   "Credentials stored securely": "안전하게 저장되는 로그인 정보",
@@ -488,7 +490,7 @@ const korean: Record<string, string> = {
   "Source IP": "출발지 IP",
   "The password was changed and other sign-in sessions were ended.": "비밀번호를 변경하고 다른 로그인 세션을 종료했습니다.",
   "The sign-in username was changed to {username}.": "로그인 사용자 이름이 {username}(으)로 변경되었습니다.",
-  "There are no Redis connections. StreamScope will run, but readiness will be degraded.": "Redis 연결이 없습니다. StreamScope는 실행되지만 readiness는 degraded 상태가 됩니다.",
+  "There are no Redis connections. RedisStreamScope will run, but readiness will be degraded.": "Redis 연결이 없습니다. RedisStreamScope는 실행되지만 readiness는 degraded 상태가 됩니다.",
   "There are no per-user permission overrides yet.": "아직 사용자별 권한 오버라이드가 없습니다.",
   "This action cannot be undone. Enter {value} to confirm.": "이 작업은 되돌릴 수 없습니다. 확인을 위해 {value}을(를) 입력하세요.",
   "Time": "시간",
@@ -566,7 +568,7 @@ const I18nContext = createContext<I18nValue | null>(null);
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>(() =>
-    window.localStorage.getItem(STORAGE_KEY) === "ko" ? "ko" : "en",
+    readMigratedStorage(window.localStorage, STORAGE_KEY, LEGACY_STORAGE_KEY) === "ko" ? "ko" : "en",
   );
 
   const setLanguage = useCallback((next: Language) => {

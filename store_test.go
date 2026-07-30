@@ -2,12 +2,66 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+func TestMigrateLegacyDatabaseWithCompanionFiles(t *testing.T) {
+	directory := t.TempDir()
+	legacyPath := filepath.Join(directory, "streamscope.db")
+	currentPath := filepath.Join(directory, "redisstreamscope.db")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.WriteFile(legacyPath+suffix, []byte("legacy"+suffix), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := migrateLegacyDatabase(legacyPath, currentPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if _, err := os.Stat(legacyPath + suffix); !os.IsNotExist(err) {
+			t.Fatalf("legacy file %s was not moved", suffix)
+		}
+		content, err := os.ReadFile(currentPath + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "legacy"+suffix {
+			t.Fatalf("migrated file %s has unexpected content", suffix)
+		}
+	}
+}
+
+func TestMigrateLegacyDatabaseDoesNotOverwriteCurrentDatabase(t *testing.T) {
+	directory := t.TempDir()
+	legacyPath := filepath.Join(directory, "streamscope.db")
+	currentPath := filepath.Join(directory, "redisstreamscope.db")
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentPath, []byte("current"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateLegacyDatabase(legacyPath, currentPath); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "current" {
+		t.Fatal("current database was overwritten")
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatal("legacy database should remain when the current database exists")
+	}
+}
 
 func TestWildcardMatch(t *testing.T) {
 	tests := []struct {
@@ -30,7 +84,7 @@ func TestWildcardMatch(t *testing.T) {
 
 func TestStoreUsersSessionsPermissionsAndLogs(t *testing.T) {
 	config := appConfig{
-		DataPath:   filepath.Join(t.TempDir(), "streamscope.db"),
+		DataPath:   filepath.Join(t.TempDir(), "redisstreamscope.db"),
 		SessionTTL: time.Hour,
 	}
 	store, err := openStore(config)
@@ -126,7 +180,7 @@ func TestStoreUsersSessionsPermissionsAndLogs(t *testing.T) {
 }
 
 func TestStorePersistsMonitoredStreamsPerConnection(t *testing.T) {
-	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +219,7 @@ func TestStorePersistsMonitoredStreamsPerConnection(t *testing.T) {
 }
 
 func TestInitialAdminCanOnlyBeCreatedOnce(t *testing.T) {
-	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +251,7 @@ func TestInitialAdminCanOnlyBeCreatedOnce(t *testing.T) {
 }
 
 func TestEnsureDefaultAdminCreatesReusableCredentials(t *testing.T) {
-	config := appConfig{DataPath: filepath.Join(t.TempDir(), "streamscope.db"), SessionTTL: time.Hour}
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)
 	if err != nil {
 		t.Fatal(err)

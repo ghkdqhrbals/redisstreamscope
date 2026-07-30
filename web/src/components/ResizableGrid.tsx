@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { useI18n } from "../i18n";
+import { readMigratedStorage } from "../storage";
 
 export type ResizableGridColumn = {
   id: string;
@@ -30,7 +31,8 @@ type ResizableGridProps = {
   children: ReactNode;
 };
 
-const STORAGE_PREFIX = "streamscope:grid-columns:v1:";
+const STORAGE_PREFIX = "redisstreamscope:grid-columns:v1:";
+const LEGACY_STORAGE_PREFIX = "streamscope:grid-columns:v1:";
 
 export function ResizableGrid({
   className,
@@ -157,7 +159,11 @@ export function ResizableGrid({
 
 function loadWidths(storageKey: string, columns: ResizableGridColumn[]) {
   try {
-    const saved = JSON.parse(window.localStorage.getItem(`${STORAGE_PREFIX}${storageKey}`) ?? "{}") as Record<string, number>;
+    const saved = JSON.parse(readMigratedStorage(
+      window.localStorage,
+      `${STORAGE_PREFIX}${storageKey}`,
+      `${LEGACY_STORAGE_PREFIX}${storageKey}`,
+    ) ?? "{}") as Record<string, number>;
     return Object.fromEntries(columns.map((column) => [
       column.id,
       Math.max(column.minWidth, Number(saved[column.id]) || column.defaultWidth),

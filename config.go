@@ -55,6 +55,11 @@ type appConfig struct {
 	MaxLiveStreams int
 }
 
+const (
+	defaultDataPath       = "/data/redisstreamscope.db"
+	legacyDefaultDataPath = "/data/streamscope.db"
+)
+
 func loadConfig() (appConfig, error) {
 	port, err := serverPort()
 	if err != nil {
@@ -62,7 +67,7 @@ func loadConfig() (appConfig, error) {
 	}
 	cfg := appConfig{
 		Addr:           ":" + port,
-		DataPath:       envOr("DATA_PATH", "/data/streamscope.db"),
+		DataPath:       envOr("DATA_PATH", defaultDataPath),
 		ConfigPath:     envOr("CONFIG_PATH", "/data/config.properties"),
 		SessionTTL:     12 * time.Hour,
 		SecureCookies:  envBool("SECURE_COOKIES", false),
@@ -388,7 +393,7 @@ func savePropertiesConfig(path string, cfg appConfig) error {
 
 func renderProperties(cfg appConfig, maskPasswords bool) string {
 	var builder strings.Builder
-	builder.WriteString("# Managed by StreamScope. Changes made in Settings replace this file.\n")
+	builder.WriteString("# Managed by RedisStreamScope. Changes made in Settings replace this file.\n")
 	builder.WriteString("version=1\n")
 	writeProperty(&builder, "server.secureCookies", strconv.FormatBool(cfg.SecureCookies))
 	writeProperty(&builder, "server.sessionTTL", cfg.SessionTTL.String())

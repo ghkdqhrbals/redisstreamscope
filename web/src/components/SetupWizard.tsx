@@ -69,7 +69,7 @@ export function SetupWizard({ configPath, initialConnection, onComplete }: {
   return (
     <main className="setup-page">
       <aside className="setup-rail">
-        <div className="setup-wordmark"><span className="brand-mark"><Layers3 size={19} /></span><strong>StreamScope</strong></div>
+        <div className="setup-wordmark"><span className="brand-mark"><Layers3 size={19} /></span><strong>RedisStreamScope</strong></div>
         <LanguageSelect className="setup-language" />
         <div className="setup-progress">
           {steps.map(({ label, icon: Icon }, index) => <div className={index === step ? "active" : index < step ? "complete" : ""} key={label}><span>{index < step ? <Check size={14} /> : <Icon size={15} />}</span><div><strong>{t(label)}</strong><small>{index < step ? t("Complete") : index === step ? t("In progress") : t("Pending")}</small></div></div>)}
@@ -81,7 +81,7 @@ export function SetupWizard({ configPath, initialConnection, onComplete }: {
         <div className="setup-content">
           {step === 0 ? <div className="setup-intro">
             <div className="setup-icon"><Layers3 size={24} /></div>
-            <h1>{t("Set up StreamScope")}</h1>
+            <h1>{t("Set up RedisStreamScope")}</h1>
             <p>{t("The container is ready. Configure the administrator account and Redis connection in your browser.")}</p>
             <div className="setup-facts"><div><LockKeyhole size={17} /><span><strong>{t("Administrator account")}</strong><small>{t("Credentials stored securely")}</small></span></div><div><Database size={17} /><span><strong>{t("Redis connection")}</strong><small>{t("Standalone, Sentinel and Cluster support")}</small></span></div><div><ServerCog size={17} /><span><strong>{t("Persistent properties")}</strong><small>{t("Settings are atomically stored at CONFIG_PATH")}</small></span></div></div>
             <div className="setup-notice">{t("Until setup is complete, expose the service only on 127.0.0.1.")}</div>

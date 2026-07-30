@@ -1,4 +1,4 @@
-module streamscope
+module redisstreamscope
 
 go 1.25.0
 

@@ -331,7 +331,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     setStreamCursor(streamResponse.nextCursor);
     setHasMoreStreams(streamResponse.hasMore);
     setShowMonitor(false);
-    window.dispatchEvent(new Event("streamscope:streams-changed"));
+    window.dispatchEvent(new Event("redisstreamscope:streams-changed"));
     await changeStream(keys[0]);
     onToast({
       kind: "success",
@@ -357,7 +357,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
         const nextKey = response.items.find((stream) => stream.available)?.key ?? "";
         await changeStream(nextKey);
       }
-      window.dispatchEvent(new Event("streamscope:streams-changed"));
+      window.dispatchEvent(new Event("redisstreamscope:streams-changed"));
       onToast({
         kind: "success",
         title: t("Removed from monitoring"),

@@ -3,6 +3,7 @@ dist
 bin
 .env
 config.local.properties
+redisstreamscope.local.db*
 streamscope.local.db*
 *.log
 .DS_Store

@@ -1,21 +1,21 @@
 <p align="center">
-  <img src="./design/streamscope-logo.png" alt="StreamScope logo" width="128">
+  <img src="./design/redisstreamscope-logo.png" alt="RedisStreamScope logo" width="128">
 </p>
 
-<h1 align="center">StreamScope</h1>
+<h1 align="center">RedisStreamScope</h1>
 
-Redis Streams did not have the focused monitoring experience we wanted: a clear, Kafka-console-style view of streams, messages, consumer groups, lag, and delivery health. That is why we built StreamScope.
+Redis Streams did not have the focused monitoring experience we wanted: a clear, Kafka-console-style view of streams, messages, consumer groups, lag, and delivery health. That is why we built RedisStreamScope.
 
-StreamScope is for developers and operators who want to inspect Redis Streams, follow consumer activity, diagnose lag, and manage access from one lightweight, self-hosted interface.
+RedisStreamScope is for developers and operators who want to inspect Redis Streams, follow consumer activity, diagnose lag, and manage access from one lightweight, self-hosted interface.
 
 ## Quick start
 
 ```sh
 docker run -d \
-  --name streamscope \
+  --name redisstreamscope \
   -p 8080:8080 \
-  -v streamscope-data:/data \
-  ghcr.io/ghkdqhrbals/streamscope:2.0.0
+  -v redisstreamscope-data:/data \
+  ghcr.io/ghkdqhrbals/redisstreamscope:latest
 ```
 
 Open [http://localhost:8080](http://localhost:8080) and sign in:
@@ -43,19 +43,19 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 ### Overview
 
 <p align="center">
-  <img src="./design/streamscope-overview.png" alt="StreamScope overview" width="960">
+  <img src="./design/redisstreamscope-overview.png" alt="RedisStreamScope overview" width="960">
 </p>
 
 ### Streams and messages
 
 <p align="center">
-  <img src="./design/streamscope-streams.png" alt="Streams and messages" width="960">
+  <img src="./design/redisstreamscope-streams.png" alt="Streams and messages" width="960">
 </p>
 
 ### Roles and permissions
 
 <p align="center">
-  <img src="./design/streamscope-access-control.png" alt="Roles and permissions" width="960">
+  <img src="./design/redisstreamscope-access-control.png" alt="Roles and permissions" width="960">
 </p>
 
 ## Technology
@@ -76,10 +76,10 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 | `6.2` | Core Streams, groups, pending entries, `XCLAIM`, and `XAUTOCLAIM` |
 | `7.0` | Consumer-group lag and `entries-read` metrics |
 | `7.2`, `7.4` | Separate consumer inactive-time reporting |
-| `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | All current StreamScope features and metrics |
+| `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | All current RedisStreamScope features and metrics |
 
 Every pull request runs the integration suite against the latest patch release in each listed Redis version line.
 
 ## License
 
-StreamScope is available for noncommercial use under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Commercial use is not permitted without a separate license from the copyright holder.
+RedisStreamScope is available for noncommercial use under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Commercial use is not permitted without a separate license from the copyright holder.

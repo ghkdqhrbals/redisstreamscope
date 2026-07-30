@@ -149,7 +149,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: false
-          tags: streamscope:pr-${{ github.event.pull_request.number || github.run_number }}
+          tags: redisstreamscope:pr-${{ github.event.pull_request.number || github.run_number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

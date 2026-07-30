@@ -48,9 +48,9 @@ func TestRedisVersionCompatibility(t *testing.T) {
 			t.Fatalf("write Redis version result: %v", err)
 		}
 	}
-	t.Logf("running StreamScope compatibility suite against Redis %s", actualVersion)
+	t.Logf("running RedisStreamScope compatibility suite against Redis %s", actualVersion)
 
-	prefix := fmt.Sprintf("streamscope:compat:%d", time.Now().UnixNano())
+	prefix := fmt.Sprintf("redisstreamscope:compat:%d", time.Now().UnixNano())
 	streamKey := prefix + ":events"
 	groupStreamKey := prefix + ":group-events"
 	nonStreamKey := prefix + ":not-a-stream"

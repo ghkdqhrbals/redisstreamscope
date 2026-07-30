@@ -33,7 +33,7 @@ func TestSaveAndLoadPropertiesConfig(t *testing.T) {
 		SecureCookies: true,
 		Connections: []connectionConfig{{
 			ID: "prod", Name: "Production", Mode: "standalone",
-			Addrs: []string{"redis.internal:6379"}, Username: "streamscope",
+			Addrs: []string{"redis.internal:6379"}, Username: "redisstreamscope",
 			Password: `not=returned:\to-browser `, DB: 2, KeyPattern: "orders.*",
 		}},
 	}
@@ -108,13 +108,13 @@ func TestClusterRejectsNonZeroDatabase(t *testing.T) {
 func TestLoadConfigPersistsRedisEnvironment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.properties")
 	t.Setenv("CONFIG_PATH", path)
-	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "streamscope.db"))
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "redisstreamscope.db"))
 	t.Setenv("PORT", "9090")
 	t.Setenv("REDIS_HOST", "redis.internal")
 	t.Setenv("REDIS_PORT", "6380")
 	t.Setenv("REDIS_ID", "production")
 	t.Setenv("REDIS_NAME", "Production Redis")
-	t.Setenv("REDIS_USERNAME", "streamscope")
+	t.Setenv("REDIS_USERNAME", "redisstreamscope")
 	t.Setenv("REDIS_PASSWORD", "secret password")
 	t.Setenv("REDIS_DATABASE", "2")
 	t.Setenv("REDIS_KEY_PATTERN", "orders:*")

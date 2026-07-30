@@ -46,7 +46,7 @@ export function ConnectionsView({ role, onToast }: ConnectionsViewProps) {
     try {
       await api.updateSettings(configs.map((connection) => connection.id === editing.id ? editing : connection));
       setEditing(null);
-      window.dispatchEvent(new Event("streamscope:connections-changed"));
+      window.dispatchEvent(new Event("redisstreamscope:connections-changed"));
       await load();
       onToast({ kind: "success", title: t("Redis connection updated"), message: t("The connection was saved and reloaded immediately.") });
     } catch (cause) {
@@ -77,7 +77,7 @@ export function ConnectionsView({ role, onToast }: ConnectionsViewProps) {
       await api.updateSettings(configs.filter((connection) => connection.id !== deleting.id));
       const deletedName = deleting.name || deleting.id;
       setDeleting(null);
-      window.dispatchEvent(new Event("streamscope:connections-changed"));
+      window.dispatchEvent(new Event("redisstreamscope:connections-changed"));
       await load();
       onToast({ kind: "success", title: t("Redis connection deleted"), message: t("Deleted {name} and reloaded the connection list.", { name: deletedName }) });
     } catch (cause) {
@@ -217,7 +217,7 @@ function ConnectionSettings({ onToast }: { onToast: (toast: ToastState) => void 
     try {
       await api.updateSettings(connections);
       await load();
-      window.dispatchEvent(new Event("streamscope:connections-changed"));
+      window.dispatchEvent(new Event("redisstreamscope:connections-changed"));
       onToast({ kind: "success", title: t("Configuration saved"), message: t("Saved to CONFIG_PATH and reloaded Redis connections immediately.") });
     } catch (cause) {
       setError(cause instanceof Error ? t(cause.message) : t("Unable to save Redis settings."));
@@ -247,7 +247,7 @@ function ConnectionSettings({ onToast }: { onToast: (toast: ToastState) => void 
           </button>
         </div>
       ))}
-      {!loading && connections.length === 0 ? <div className="panel-empty">{t("There are no Redis connections. StreamScope will run, but readiness will be degraded.")}</div> : null}
+      {!loading && connections.length === 0 ? <div className="panel-empty">{t("There are no Redis connections. RedisStreamScope will run, but readiness will be degraded.")}</div> : null}
       {error ? <div className="login-error" role="alert">{error}</div> : null}
       <div className="connection-settings-footer">
         <span>{t("Saving atomically replaces the properties file without exposing existing passwords to the browser.")}</span>

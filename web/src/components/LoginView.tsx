@@ -25,7 +25,7 @@ export function LoginView({ busy, error, onLogin }: LoginViewProps) {
       <section className="login-brand">
         <div className="brand-mark brand-mark--large"><Layers3 size={25} /></div>
         <div>
-          <div className="login-wordmark">StreamScope</div>
+          <div className="login-wordmark">RedisStreamScope</div>
           <p>{t("Redis Streams, clearly operational.")}</p>
         </div>
         <div className="login-signal">
@@ -49,7 +49,7 @@ export function LoginView({ busy, error, onLogin }: LoginViewProps) {
         <div className="login-card">
           <div className="mobile-login-brand">
             <span className="brand-mark"><Layers3 size={18} /></span>
-            <strong>StreamScope</strong>
+            <strong>RedisStreamScope</strong>
           </div>
           <div className="login-icon"><LockKeyhole size={22} /></div>
           <h1>{t("Administrator sign in")}</h1>

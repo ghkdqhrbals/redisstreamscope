@@ -11,8 +11,10 @@ import { StreamsView } from "./views/StreamsView";
 import { ConnectionsView, SettingsView } from "./views/SystemViews";
 import { AccessControlView } from "./views/AccessControlView";
 import { useI18n } from "./i18n";
+import { readMigratedStorage } from "./storage";
 
-const DEV_SESSION_KEY = "streamscope:dev-session";
+const DEV_SESSION_KEY = "redisstreamscope:dev-session";
+const LEGACY_DEV_SESSION_KEY = "streamscope:dev-session";
 
 export function App() {
   const { t } = useI18n();
@@ -54,7 +56,7 @@ export function App() {
       .catch(() => {
         if (!active) return;
         setSetupRequired(false);
-        setAuthenticated(import.meta.env.DEV && sessionStorage.getItem(DEV_SESSION_KEY) === "true");
+        setAuthenticated(import.meta.env.DEV && readMigratedStorage(sessionStorage, DEV_SESSION_KEY, LEGACY_DEV_SESSION_KEY) === "true");
       });
     return () => { active = false; };
   }, []);
@@ -90,6 +92,7 @@ export function App() {
   const logout = async () => {
     await api.logout().catch(() => undefined);
     sessionStorage.removeItem(DEV_SESSION_KEY);
+    sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
     setAuthenticated(false);
   };
 
@@ -102,7 +105,7 @@ export function App() {
   };
 
   if (setupRequired === null || authenticated === null) {
-    return <div className="app-loading"><span className="brand-loader" />{t("Preparing StreamScope…")}</div>;
+    return <div className="app-loading"><span className="brand-loader" />{t("Preparing RedisStreamScope…")}</div>;
   }
 
   if (setupRequired) {
