@@ -79,3 +79,7 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 | `8.0`, `8.2`, `8.4`, `8.6`, `8.8` | All current StreamScope features and metrics |
 
 Every pull request runs the integration suite against the latest patch release in each listed Redis version line.
+
+## License
+
+StreamScope is available for noncommercial use under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Commercial use is not permitted without a separate license from the copyright holder.
