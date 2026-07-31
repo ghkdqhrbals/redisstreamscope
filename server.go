@@ -1528,12 +1528,22 @@ func requestScope(request *http.Request) string {
 }
 
 func validOrigin(request *http.Request) bool {
-	origin := request.Header.Get("Origin")
+	switch strings.ToLower(strings.TrimSpace(request.Header.Get("Sec-Fetch-Site"))) {
+	case "cross-site", "same-site":
+		return false
+	case "same-origin":
+		return true
+	}
+
+	origin := strings.TrimSpace(request.Header.Get("Origin"))
 	if origin == "" {
 		return true
 	}
 	parsed, err := url.Parse(origin)
-	return err == nil && parsed.Host == request.Host
+	return err == nil &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.Host != "" &&
+		strings.EqualFold(parsed.Host, request.Host)
 }
 
 func sanitizeRedisError(message string) string {

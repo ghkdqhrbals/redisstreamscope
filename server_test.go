@@ -72,6 +72,52 @@ func TestConnectionInputAllowsEmptyPassword(t *testing.T) {
 	}
 }
 
+func TestValidOriginAllowsSameOriginBrowserRequestBehindProxy(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPut, "http://redisstreamscope:8080/api/settings", nil)
+	request.Host = "redisstreamscope:8080"
+	request.Header.Set("Origin", "https://streams.example.com")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	if !validOrigin(request) {
+		t.Fatal("same-origin browser request must remain valid when a reverse proxy rewrites Host")
+	}
+}
+
+func TestValidOriginRejectsCrossOriginBrowserRequests(t *testing.T) {
+	for name, fetchSite := range map[string]string{
+		"cross site": "cross-site",
+		"same site":  "same-site",
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPut, "https://streams.example.com/api/settings", nil)
+			request.Header.Set("Origin", "https://attacker.example.com")
+			request.Header.Set("Sec-Fetch-Site", fetchSite)
+
+			if validOrigin(request) {
+				t.Fatalf("%s browser request must be rejected", fetchSite)
+			}
+		})
+	}
+}
+
+func TestValidOriginFallsBackToOriginAndHost(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPut, "https://streams.example.com/api/settings", nil)
+	request.Header.Set("Origin", "https://streams.example.com")
+	if !validOrigin(request) {
+		t.Fatal("matching Origin and Host must be accepted")
+	}
+
+	request.Header.Set("Origin", "https://attacker.example.com")
+	if validOrigin(request) {
+		t.Fatal("mismatched Origin and Host must be rejected")
+	}
+
+	request.Header.Set("Origin", "null")
+	if validOrigin(request) {
+		t.Fatal("opaque origins must be rejected")
+	}
+}
+
 func TestValidateMonitoredStreamKey(t *testing.T) {
 	key, err := validateMonitoredStreamKey("  orders:events  ")
 	if err != nil || key != "orders:events" {
