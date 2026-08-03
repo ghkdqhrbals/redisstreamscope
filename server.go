@@ -107,6 +107,7 @@ func (s *apiServer) routes() {
 	s.mux.Handle("GET /api/connections", s.protect("connections:read", s.connections))
 	s.mux.Handle("GET /api/overview", s.protect("streams:read", s.overview))
 	s.mux.Handle("GET /api/metrics/timeseries", s.protect("streams:read", s.metricSeries))
+	s.mux.Handle("GET /api/metrics/consumer-groups", s.protect("groups:read", s.consumerGroupMetricSeries))
 	s.mux.Handle("GET /api/streams", s.protect("streams:read", s.streams))
 	s.mux.Handle("GET /api/monitored-streams/status", s.protect("streams:read", s.monitoredStreamStatus))
 	s.mux.Handle("POST /api/monitored-streams", s.protect("streams:write", s.addMonitoredStream))
@@ -262,8 +263,8 @@ func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if len(strings.TrimSpace(input.Admin.Username)) < 3 || len(input.Admin.Password) < 12 {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "관리자 이름은 3자, 비밀번호는 12자 이상이어야 합니다.")
+	if len(strings.TrimSpace(input.Admin.Username)) < 3 || strings.TrimSpace(input.Admin.DisplayName) == "" || !passwordProvided(input.Admin.Password) {
+		writeError(writer, http.StatusBadRequest, "validation_failed", "관리자 이름은 3자 이상이어야 하며 표시 이름과 비밀번호는 필수입니다.")
 		return
 	}
 	if len(input.Connections) == 0 {
@@ -381,8 +382,8 @@ func (s *apiServer) changePassword(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if len(input.NewPassword) < 12 {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "새 비밀번호는 12자 이상이어야 합니다.")
+	if !passwordProvided(input.NewPassword) {
+		writeError(writer, http.StatusBadRequest, "validation_failed", "새 비밀번호를 입력하세요.")
 		return
 	}
 	if input.CurrentPassword == input.NewPassword {
@@ -1273,8 +1274,8 @@ func (s *apiServer) createUser(writer http.ResponseWriter, request *http.Request
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if len(strings.TrimSpace(input.Username)) < 3 || strings.TrimSpace(input.DisplayName) == "" || len(input.Password) < 12 {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "사용자 이름은 3자 이상, 표시 이름은 필수이며 비밀번호는 12자 이상이어야 합니다.")
+	if len(strings.TrimSpace(input.Username)) < 3 || strings.TrimSpace(input.DisplayName) == "" || !passwordProvided(input.Password) {
+		writeError(writer, http.StatusBadRequest, "validation_failed", "사용자 이름은 3자 이상이어야 하며 표시 이름과 비밀번호는 필수입니다.")
 		return
 	}
 	hash, err := hashPassword(input.Password)
@@ -1303,11 +1304,7 @@ func (s *apiServer) updateUser(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	passwordHash := ""
-	if input.Password != "" {
-		if len(input.Password) < 12 {
-			writeError(writer, http.StatusBadRequest, "validation_failed", "비밀번호는 12자 이상이어야 합니다.")
-			return
-		}
+	if passwordProvided(input.Password) {
 		var err error
 		passwordHash, err = hashPassword(input.Password)
 		if err != nil {
@@ -1497,6 +1494,9 @@ func streamIDTime(id string) time.Time {
 func requestScope(request *http.Request) string {
 	connection := request.URL.Query().Get("connectionId")
 	key := request.URL.Query().Get("key")
+	if key == "" {
+		key = request.URL.Query().Get("streamKey")
+	}
 	if connection == "" {
 		connection = "*"
 	}
@@ -1570,6 +1570,10 @@ func makeAccessLog(request *http.Request, session sessionRecord, action, scope s
 func hashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	return string(hash), err
+}
+
+func passwordProvided(password string) bool {
+	return password != ""
 }
 
 func mergeConnectionInputs(inputs []connectionInput, existing []connectionConfig) ([]connectionConfig, error) {

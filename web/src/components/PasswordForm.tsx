@@ -23,10 +23,6 @@ export function PasswordForm({ submitLabel, onChanged }: PasswordFormProps) {
       setError(t("New password confirmation does not match."));
       return;
     }
-    if (newPassword.length < 12) {
-      setError(t("New password must be at least 12 characters."));
-      return;
-    }
     setBusy(true);
     try {
       await api.changePassword(currentPassword, newPassword);
@@ -54,17 +50,17 @@ export function PasswordForm({ submitLabel, onChanged }: PasswordFormProps) {
         {t("New password")}
         <span className="password-input">
           <KeyRound size={15} />
-          <input type="password" autoComplete="new-password" minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required />
+          <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required />
         </span>
       </label>
       <label>
         {t("Confirm new password")}
         <span className="password-input">
           <KeyRound size={15} />
-          <input type="password" autoComplete="new-password" minLength={12} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required />
+          <input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required />
         </span>
       </label>
-      <p className="password-hint">{t("Use at least 12 characters. Changing it signs out sessions in other browsers.")}</p>
+      <p className="password-hint">{t("Changing the password signs out sessions in other browsers.")}</p>
       {error ? <div className="login-error" role="alert">{error}</div> : null}
       <button className="primary-button password-submit" disabled={busy}>
         {busy ? t("Changing…") : submitLabel ?? t("Change password")}

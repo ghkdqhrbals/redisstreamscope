@@ -2701,6 +2701,18 @@ body.column-resizing * {
 .metric-chart-tooltip i.metric-line-tertiary {
   background: repeating-linear-gradient(90deg, #555b65 0 2px, transparent 2px 5px);
 }
+.metric-chart-legend i.metric-line-group-0,
+.metric-chart-tooltip i.metric-line-group-0 { background: #1f2023; }
+.metric-chart-legend i.metric-line-group-1,
+.metric-chart-tooltip i.metric-line-group-1 { background: repeating-linear-gradient(90deg, #555960 0 6px, transparent 6px 9px); }
+.metric-chart-legend i.metric-line-group-2,
+.metric-chart-tooltip i.metric-line-group-2 { background: repeating-linear-gradient(90deg, #7b8088 0 3px, transparent 3px 6px); }
+.metric-chart-legend i.metric-line-group-3,
+.metric-chart-tooltip i.metric-line-group-3 { background: repeating-linear-gradient(90deg, #34363b 0 9px, transparent 9px 12px); }
+.metric-chart-legend i.metric-line-group-4,
+.metric-chart-tooltip i.metric-line-group-4 { background: repeating-linear-gradient(90deg, #696e76 0 2px, transparent 2px 6px); }
+.metric-chart-legend i.metric-line-group-5,
+.metric-chart-tooltip i.metric-line-group-5 { background: repeating-linear-gradient(90deg, #9a9fa7 0 11px, transparent 11px 15px); }
 .metric-chart-canvas {
   position: relative;
   min-height: 270px;
@@ -2724,6 +2736,12 @@ body.column-resizing * {
 .metric-series.metric-line-primary path { stroke: #1f2023; }
 .metric-series.metric-line-secondary path { stroke: #8a909a; stroke-dasharray: 5 4; }
 .metric-series.metric-line-tertiary path { stroke: #555b65; stroke-dasharray: 2 4; }
+.metric-series.metric-line-group-0 path { stroke: #1f2023; }
+.metric-series.metric-line-group-1 path { stroke: #555960; stroke-dasharray: 6 3; }
+.metric-series.metric-line-group-2 path { stroke: #7b8088; stroke-dasharray: 3 3; }
+.metric-series.metric-line-group-3 path { stroke: #34363b; stroke-dasharray: 9 3 2 3; }
+.metric-series.metric-line-group-4 path { stroke: #696e76; stroke-dasharray: 2 4; }
+.metric-series.metric-line-group-5 path { stroke: #9a9fa7; stroke-dasharray: 11 4; }
 .metric-series.metric-line-primary circle { fill: #1f2023; }
 .metric-series.metric-line-secondary circle { fill: #8a909a; }
 .metric-series.metric-line-tertiary circle { fill: #555b65; }
@@ -2732,6 +2750,12 @@ body.column-resizing * {
 .metric-hover-point.metric-line-primary { fill: #1f2023; }
 .metric-hover-point.metric-line-secondary { fill: #8a909a; }
 .metric-hover-point.metric-line-tertiary { fill: #555b65; }
+.metric-hover-point.metric-line-group-0 { fill: #1f2023; }
+.metric-hover-point.metric-line-group-1 { fill: #555960; }
+.metric-hover-point.metric-line-group-2 { fill: #7b8088; }
+.metric-hover-point.metric-line-group-3 { fill: #34363b; }
+.metric-hover-point.metric-line-group-4 { fill: #696e76; }
+.metric-hover-point.metric-line-group-5 { fill: #9a9fa7; }
 .metric-chart-hit-area { fill: transparent; pointer-events: all; }
 .metric-x-axis {
   position: absolute;
@@ -2791,6 +2815,18 @@ body.column-resizing * {
   place-items: center;
   color: var(--muted);
   font-size: 12px;
+}
+.consumer-group-metrics-empty {
+  min-height: 210px;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.stream-groups-section .consumer-group-metrics-panel {
+  margin: 0 14px 14px;
 }
 
 @media (max-width: 1200px) {

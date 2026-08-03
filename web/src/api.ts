@@ -1,4 +1,4 @@
-import type { ApiSession, ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem, StreamMetricSeries } from "./types";
+import type { ApiSession, ConsumerGroup, ConsumerGroupMetricSeries, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisConnectionConfig, RedisEntry, StreamItem, StreamMetricSeries } from "./types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -53,6 +53,10 @@ export const api = {
   metrics: (connectionId: string, range: StreamMetricSeries["range"], streamKey = "") =>
     request<StreamMetricSeries>(
       `/api/metrics/timeseries?connectionId=${encodeURIComponent(connectionId)}&range=${encodeURIComponent(range)}${streamKey ? `&streamKey=${encodeURIComponent(streamKey)}` : ""}`,
+    ),
+  consumerGroupMetrics: (connectionId: string, streamKey: string, range: StreamMetricSeries["range"]) =>
+    request<ConsumerGroupMetricSeries>(
+      `/api/metrics/consumer-groups?connectionId=${encodeURIComponent(connectionId)}&streamKey=${encodeURIComponent(streamKey)}&range=${encodeURIComponent(range)}`,
     ),
   streams: (connectionId: string, cursor = 0, pattern?: string) =>
     request<{ items: StreamItem[]; nextCursor: number; hasMore: boolean }>(

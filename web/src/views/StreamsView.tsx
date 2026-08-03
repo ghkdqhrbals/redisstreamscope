@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api";
+import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
 import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
@@ -535,10 +536,18 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
             </button>
             <strong className="stream-section-count">{groups.length}</strong>
           </div>
-          {groupsSectionOpen ? <ResizableGrid className="simple-table" storageKey="stream-consumer-groups" columns={groupColumns} headerClassName="simple-head">
-            {groups.map((group) => <button className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`} key={group.name} onClick={() => void openGroup(group.name)}><span><UsersRound size={15} />{group.name}</span><span>{group.consumers}</span><span>{group.pending}</span><span>{group.lag}</span><span className="mono stream-id-cell" title={group.lastDeliveredId}>{group.lastDeliveredId}</span><ChevronRight size={16} /></button>)}
-            {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
-          </ResizableGrid> : null}
+          {groupsSectionOpen ? <>
+            <ConsumerGroupMetricsPanel
+              key={`${connectionId}:${key}`}
+              connectionId={connectionId}
+              streamKey={key}
+              monitored={selectedStream?.monitored ?? false}
+            />
+            <ResizableGrid className="simple-table" storageKey="stream-consumer-groups" columns={groupColumns} headerClassName="simple-head">
+              {groups.map((group) => <button className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`} key={group.name} onClick={() => void openGroup(group.name)}><span><UsersRound size={15} />{group.name}</span><span>{group.consumers}</span><span>{group.pending}</span><span>{group.lag}</span><span className="mono stream-id-cell" title={group.lastDeliveredId}>{group.lastDeliveredId}</span><ChevronRight size={16} /></button>)}
+              {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
+            </ResizableGrid>
+          </> : null}
           </section>
           </div>
         </div> : null}

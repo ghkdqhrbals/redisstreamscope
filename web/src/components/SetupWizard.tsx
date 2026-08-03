@@ -33,7 +33,8 @@ export function SetupWizard({ configPath, initialConnection, onComplete }: {
     setError("");
     if (step === 1) {
       if (username.trim().length < 3) return setError(t("Administrator username must be at least 3 characters."));
-      if (password.length < 12) return setError(t("Administrator password must be at least 12 characters."));
+      if (!displayName.trim()) return setError(t("Display name is required."));
+      if (!password) return setError(t("Administrator password is required."));
       if (password !== confirmation) return setError(t("Password confirmation does not match."));
     }
     if (step === 2 && (!connection.id.trim() || !connection.addrs.some(Boolean))) return setError(t("Enter a Redis ID and address."));
@@ -89,7 +90,7 @@ export function SetupWizard({ configPath, initialConnection, onComplete }: {
 
           {step === 1 ? <div className="setup-form-page">
             <div className="setup-icon"><UserRoundCog size={23} /></div><h1>{t("Administrator account")}</h1><p>{t("This is the final administrator password. No temporary password or pre-generated hash is required.")}</p>
-            <div className="setup-form-grid"><label>{t("Username")}<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label><label>{t("Password")}<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} required /></label><label>{t("Confirm password")}<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} minLength={12} required /></label></div>
+            <div className="setup-form-grid"><label>{t("Username")}<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label><label>{t("Password")}<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label><label>{t("Confirm password")}<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label></div>
           </div> : null}
 
           {step === 2 ? <div className="setup-form-page setup-redis-page">

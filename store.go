@@ -246,6 +246,40 @@ func (s *store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS stream_metric_rollups_connection_time_idx
 			ON stream_metric_rollups(connection_id, recorded_at)`,
+		`CREATE TABLE IF NOT EXISTS consumer_group_metric_samples (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at TEXT NOT NULL,
+			connection_id TEXT NOT NULL,
+			stream_key TEXT NOT NULL,
+			group_name TEXT NOT NULL,
+			consumer_count INTEGER NOT NULL,
+			pending INTEGER NOT NULL,
+			lag INTEGER NOT NULL,
+			lag_known INTEGER NOT NULL,
+			last_delivered_id TEXT NOT NULL,
+			consume_delay_ms INTEGER,
+			consumed_total INTEGER NOT NULL,
+			consume_rate REAL,
+			lag_delta REAL
+		)`,
+		`CREATE INDEX IF NOT EXISTS consumer_group_metric_samples_lookup_idx
+			ON consumer_group_metric_samples(connection_id, stream_key, group_name, recorded_at)`,
+		`CREATE TABLE IF NOT EXISTS consumer_group_metric_rollups (
+			recorded_at TEXT NOT NULL,
+			connection_id TEXT NOT NULL,
+			stream_key TEXT NOT NULL,
+			group_name TEXT NOT NULL,
+			consumer_count REAL NOT NULL,
+			pending REAL NOT NULL,
+			lag REAL NOT NULL,
+			lag_known INTEGER NOT NULL,
+			consume_delay_ms REAL,
+			consume_rate REAL,
+			lag_delta REAL,
+			PRIMARY KEY(connection_id, stream_key, group_name, recorded_at)
+		)`,
+		`CREATE INDEX IF NOT EXISTS consumer_group_metric_rollups_lookup_idx
+			ON consumer_group_metric_rollups(connection_id, stream_key, recorded_at)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

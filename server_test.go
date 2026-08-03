@@ -72,6 +72,18 @@ func TestConnectionInputAllowsEmptyPassword(t *testing.T) {
 	}
 }
 
+func TestPasswordPolicyAllowsAnyNonEmptyPassword(t *testing.T) {
+	if !passwordProvided("x") {
+		t.Fatal("a one-character password must be accepted")
+	}
+	if _, err := hashPassword("x"); err != nil {
+		t.Fatalf("a one-character password must be hashable: %v", err)
+	}
+	if passwordProvided("") {
+		t.Fatal("an empty password must be rejected for user accounts")
+	}
+}
+
 func TestValidOriginAllowsSameOriginBrowserRequestBehindProxy(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPut, "http://redisstreamscope:8080/api/settings", nil)
 	request.Host = "redisstreamscope:8080"

@@ -23,6 +23,61 @@ func TestObservedConsumeDelayOnlyChangesWhenDeliveryAdvances(t *testing.T) {
 	}
 }
 
+func TestConsumerGroupMetricRates(t *testing.T) {
+	previous := consumerGroupMetricState{
+		RecordedAt:    time.Unix(100, 0),
+		ConsumedTotal: 20,
+		Lag:           8,
+		LagKnown:      true,
+	}
+	consumeRate, lagDelta := consumerGroupMetricRates(time.Unix(102, 0), previous, 26, 4, true, true)
+	if consumeRate == nil || *consumeRate != 3 {
+		t.Fatalf("consume rate=%v, want 3", consumeRate)
+	}
+	if lagDelta == nil || *lagDelta != -2 {
+		t.Fatalf("lag delta=%v, want -2", lagDelta)
+	}
+}
+
+func TestConsumerGroupMetricSamplesAggregateByGroup(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	ctx := context.Background()
+	first := time.Date(2026, 7, 31, 2, 0, 0, 0, time.UTC)
+	second := first.Add(time.Second)
+	delayA := int64(100)
+	delayB := int64(300)
+	rateA := 2.0
+	rateB := 1.0
+	samples := []consumerGroupMetricSample{
+		{RecordedAt: first, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-a", ConsumerCount: 2, Pending: 1, Lag: 5, LagKnown: true, LastDeliveredID: "1-0", ConsumeDelayMs: &delayA, ConsumedTotal: 10, ConsumeRate: &rateA},
+		{RecordedAt: first, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-b", ConsumerCount: 1, Pending: 0, Lag: 7, LagKnown: true, LastDeliveredID: "1-0", ConsumeDelayMs: &delayB, ConsumedTotal: 8, ConsumeRate: &rateB},
+		{RecordedAt: second, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-a", ConsumerCount: 2, Pending: 0, Lag: 3, LagKnown: true, LastDeliveredID: "2-0", ConsumeDelayMs: &delayA, ConsumedTotal: 12, ConsumeRate: &rateA},
+	}
+	if err := store.writeConsumerGroupMetricSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	groups, points, err := store.listConsumerGroupMetricSeries(ctx, "redis", "orders", first.Add(-time.Second), second.Add(time.Second), 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0] != "workers-a" || groups[1] != "workers-b" {
+		t.Fatalf("groups=%v", groups)
+	}
+	if len(points) != 2 {
+		t.Fatalf("points=%d, want 2", len(points))
+	}
+	firstA := points[0].Values["workers-a"]
+	firstB := points[0].Values["workers-b"]
+	if firstA.Lag == nil || *firstA.Lag != 5 || firstB.ConsumeDelayMs == nil || *firstB.ConsumeDelayMs != 300 {
+		t.Fatalf("unexpected first point: %+v", points[0])
+	}
+}
+
 func TestMetricSamplesAggregateAndFilterByStream(t *testing.T) {
 	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)

@@ -2,26 +2,28 @@ import { useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import type { StreamMetricPoint } from "../types";
 
-export type MetricChartSeries = {
+type TimestampedMetricPoint = { timestamp: string };
+
+export type MetricChartSeries<TPoint extends TimestampedMetricPoint = StreamMetricPoint> = {
   id: string;
   label: string;
   description: string;
   className: string;
-  value: (point: StreamMetricPoint) => number | null;
+  value: (point: TPoint) => number | null;
   format: (value: number) => string;
 };
 
-type MetricTimeSeriesChartProps = {
+type MetricTimeSeriesChartProps<TPoint extends TimestampedMetricPoint> = {
   title: string;
-  points: StreamMetricPoint[];
-  series: MetricChartSeries[];
+  points: TPoint[];
+  series: MetricChartSeries<TPoint>[];
 };
 
 const width = 720;
 const height = 246;
 const plot = { left: 54, right: 18, top: 20, bottom: 38 };
 
-export function MetricTimeSeriesChart({ title, points, series }: MetricTimeSeriesChartProps) {
+export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({ title, points, series }: MetricTimeSeriesChartProps<TPoint>) {
   const { locale, t } = useI18n();
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -103,9 +105,9 @@ export function MetricTimeSeriesChart({ title, points, series }: MetricTimeSerie
   );
 }
 
-function lineSegments(
-  points: StreamMetricPoint[],
-  value: (point: StreamMetricPoint) => number | null,
+function lineSegments<TPoint extends TimestampedMetricPoint>(
+  points: TPoint[],
+  value: (point: TPoint) => number | null,
   xAt: (index: number) => number,
   yAt: (value: number) => number,
 ) {

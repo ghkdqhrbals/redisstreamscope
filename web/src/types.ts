@@ -39,6 +39,30 @@ export type StreamMetricSeries = {
   items: StreamMetricPoint[];
 };
 
+export type ConsumerGroupMetricValue = {
+  consumerCount: number;
+  pending: number;
+  lag: number | null;
+  consumeDelayMs: number | null;
+  consumeRate: number | null;
+  lagDelta: number | null;
+};
+
+export type ConsumerGroupMetricPoint = {
+  timestamp: string;
+  values: Record<string, ConsumerGroupMetricValue>;
+};
+
+export type ConsumerGroupMetricSeries = {
+  connectionId: string;
+  streamKey: string;
+  range: StreamMetricSeries["range"];
+  intervalSeconds: number;
+  generatedAt: string;
+  groups: string[];
+  items: ConsumerGroupMetricPoint[];
+};
+
 export type RedisConnection = {
   id: string;
   name: string;

@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,45 @@ type streamMetricState struct {
 	ConsumedTotal   int64
 	TotalLag        int64
 	LagKnown        bool
+}
+
+type consumerGroupMetricSample struct {
+	RecordedAt      time.Time
+	ConnectionID    string
+	StreamKey       string
+	GroupName       string
+	ConsumerCount   int64
+	Pending         int64
+	Lag             int64
+	LagKnown        bool
+	LastDeliveredID string
+	ConsumeDelayMs  *int64
+	ConsumedTotal   int64
+	ConsumeRate     *float64
+	LagDelta        *float64
+}
+
+type consumerGroupMetricState struct {
+	RecordedAt      time.Time
+	LastDeliveredID string
+	ConsumeDelayMs  *int64
+	ConsumedTotal   int64
+	Lag             int64
+	LagKnown        bool
+}
+
+type consumerGroupMetricValue struct {
+	ConsumerCount  float64  `json:"consumerCount"`
+	Pending        float64  `json:"pending"`
+	Lag            *float64 `json:"lag"`
+	ConsumeDelayMs *float64 `json:"consumeDelayMs"`
+	ConsumeRate    *float64 `json:"consumeRate"`
+	LagDelta       *float64 `json:"lagDelta"`
+}
+
+type consumerGroupMetricPoint struct {
+	Timestamp time.Time                           `json:"timestamp"`
+	Values    map[string]consumerGroupMetricValue `json:"values"`
 }
 
 type streamMetricPoint struct {
@@ -104,6 +144,49 @@ func (s *store) writeMetricSamples(ctx context.Context, samples []streamMetricSa
 			sample.PublishedTotal,
 			sample.ConsumedTotal,
 			nullableFloat64(sample.PublishRate),
+			nullableFloat64(sample.ConsumeRate),
+			nullableFloat64(sample.LagDelta),
+		); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
+
+func (s *store) writeConsumerGroupMetricSamples(ctx context.Context, samples []consumerGroupMetricSample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	statement, err := transaction.PrepareContext(ctx, `
+		INSERT INTO consumer_group_metric_samples(
+			recorded_at, connection_id, stream_key, group_name, consumer_count,
+			pending, lag, lag_known, last_delivered_id, consume_delay_ms,
+			consumed_total, consume_rate, lag_delta
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+	for _, sample := range samples {
+		if _, err := statement.ExecContext(
+			ctx,
+			sample.RecordedAt.UTC().Format(time.RFC3339Nano),
+			sample.ConnectionID,
+			sample.StreamKey,
+			sample.GroupName,
+			sample.ConsumerCount,
+			sample.Pending,
+			sample.Lag,
+			boolToInt(sample.LagKnown),
+			sample.LastDeliveredID,
+			nullableInt64(sample.ConsumeDelayMs),
+			sample.ConsumedTotal,
 			nullableFloat64(sample.ConsumeRate),
 			nullableFloat64(sample.LagDelta),
 		); err != nil {
@@ -174,6 +257,56 @@ func (s *store) latestMetricStates(ctx context.Context, connectionID string) (ma
 	return states, rows.Err()
 }
 
+func (s *store) latestConsumerGroupMetricStates(ctx context.Context, connectionID string) (map[string]consumerGroupMetricState, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT samples.stream_key, samples.group_name, samples.recorded_at,
+			samples.last_delivered_id, samples.consume_delay_ms,
+			samples.consumed_total, samples.lag, samples.lag_known
+		FROM consumer_group_metric_samples AS samples
+		JOIN (
+			SELECT stream_key, group_name, MAX(id) AS id
+			FROM consumer_group_metric_samples
+			WHERE connection_id=?
+			GROUP BY stream_key, group_name
+		) AS latest ON latest.id=samples.id
+	`, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	states := make(map[string]consumerGroupMetricState)
+	for rows.Next() {
+		var streamKey, groupName, recordedAt string
+		var delay sql.NullInt64
+		var state consumerGroupMetricState
+		var lagKnown int
+		if err := rows.Scan(
+			&streamKey,
+			&groupName,
+			&recordedAt,
+			&state.LastDeliveredID,
+			&delay,
+			&state.ConsumedTotal,
+			&state.Lag,
+			&lagKnown,
+		); err != nil {
+			return nil, err
+		}
+		state.RecordedAt, _ = time.Parse(time.RFC3339Nano, recordedAt)
+		state.LagKnown = lagKnown == 1
+		if delay.Valid {
+			value := delay.Int64
+			state.ConsumeDelayMs = &value
+		}
+		states[consumerGroupMetricStateKey(streamKey, groupName)] = state
+	}
+	return states, rows.Err()
+}
+
+func consumerGroupMetricStateKey(streamKey, groupName string) string {
+	return streamKey + "\x00" + groupName
+}
+
 func (s *store) maintainMetricSamples(ctx context.Context, now time.Time) error {
 	minute := now.UTC().Truncate(time.Minute)
 	from := minute.Add(-metricRawRetention)
@@ -217,10 +350,48 @@ func (s *store) maintainMetricSamples(ctx context.Context, now time.Time) error 
 	if err != nil {
 		return err
 	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO consumer_group_metric_rollups(
+			recorded_at, connection_id, stream_key, group_name, consumer_count,
+			pending, lag, lag_known, consume_delay_ms, consume_rate, lag_delta
+		)
+		SELECT
+			strftime('%Y-%m-%dT%H:%M:00Z', recorded_at),
+			connection_id,
+			stream_key,
+			group_name,
+			AVG(consumer_count),
+			AVG(pending),
+			AVG(lag),
+			MIN(lag_known),
+			AVG(consume_delay_ms),
+			AVG(consume_rate),
+			AVG(lag_delta)
+		FROM consumer_group_metric_samples
+		WHERE recorded_at>=? AND recorded_at<?
+		GROUP BY strftime('%Y-%m-%dT%H:%M:00Z', recorded_at), connection_id, stream_key, group_name
+		ON CONFLICT(connection_id, stream_key, group_name, recorded_at) DO UPDATE SET
+			consumer_count=excluded.consumer_count,
+			pending=excluded.pending,
+			lag=excluded.lag,
+			lag_known=excluded.lag_known,
+			consume_delay_ms=excluded.consume_delay_ms,
+			consume_rate=excluded.consume_rate,
+			lag_delta=excluded.lag_delta
+	`, from.Format(time.RFC3339Nano), minute.Format(time.RFC3339Nano))
+	if err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM stream_metric_samples WHERE recorded_at<?`, now.Add(-metricRawRetention).UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM stream_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano))
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM consumer_group_metric_samples WHERE recorded_at<?`, now.Add(-metricRawRetention).UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM stream_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM consumer_group_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -337,6 +508,101 @@ func (s *store) listMetricSeries(
 	return items, rows.Err()
 }
 
+func (s *store) listConsumerGroupMetricSeries(
+	ctx context.Context,
+	connectionID string,
+	streamKey string,
+	from time.Time,
+	until time.Time,
+	maxPoints int,
+) ([]string, []consumerGroupMetricPoint, error) {
+	if maxPoints < 1 {
+		maxPoints = metricMaxPoints
+	}
+	rangeSeconds := math.Max(1, until.Sub(from).Seconds())
+	bucketSeconds := int64(math.Ceil(rangeSeconds / float64(maxPoints)))
+	if bucketSeconds < 1 {
+		bucketSeconds = 1
+	}
+	table := "consumer_group_metric_samples"
+	if until.Sub(from) > time.Hour {
+		table = "consumer_group_metric_rollups"
+		if bucketSeconds < 60 {
+			bucketSeconds = 60
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		WITH buckets AS (
+			SELECT
+				group_name,
+				CAST(unixepoch(recorded_at) / ? AS INTEGER) AS bucket,
+				MIN(unixepoch(recorded_at)) AS sample_time,
+				AVG(consumer_count) AS consumer_count,
+				AVG(pending) AS pending,
+				CASE WHEN MIN(lag_known)=0 THEN NULL ELSE AVG(lag) END AS lag,
+				AVG(consume_delay_ms) AS consume_delay_ms,
+				AVG(consume_rate) AS consume_rate,
+				AVG(lag_delta) AS lag_delta
+			FROM `+table+`
+			WHERE connection_id=? AND stream_key=? AND recorded_at>=? AND recorded_at<=?
+			GROUP BY group_name, bucket
+		)
+		SELECT sample_time, group_name, consumer_count, pending, lag,
+			consume_delay_ms, consume_rate, lag_delta
+		FROM buckets
+		ORDER BY sample_time, group_name
+	`, bucketSeconds, connectionID, streamKey, from.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	groupSet := make(map[string]struct{})
+	pointIndexes := make(map[int64]int)
+	points := make([]consumerGroupMetricPoint, 0)
+	for rows.Next() {
+		var timestamp int64
+		var groupName string
+		var value consumerGroupMetricValue
+		var lag, consumeDelay, consumeRate, lagDelta sql.NullFloat64
+		if err := rows.Scan(
+			&timestamp,
+			&groupName,
+			&value.ConsumerCount,
+			&value.Pending,
+			&lag,
+			&consumeDelay,
+			&consumeRate,
+			&lagDelta,
+		); err != nil {
+			return nil, nil, err
+		}
+		value.Lag = nullFloatPointer(lag)
+		value.ConsumeDelayMs = nullFloatPointer(consumeDelay)
+		value.ConsumeRate = nullFloatPointer(consumeRate)
+		value.LagDelta = nullFloatPointer(lagDelta)
+		index, exists := pointIndexes[timestamp]
+		if !exists {
+			index = len(points)
+			pointIndexes[timestamp] = index
+			points = append(points, consumerGroupMetricPoint{
+				Timestamp: time.Unix(timestamp, 0).UTC(),
+				Values:    make(map[string]consumerGroupMetricValue),
+			})
+		}
+		points[index].Values[groupName] = value
+		groupSet[groupName] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	groups := make([]string, 0, len(groupSet))
+	for groupName := range groupSet {
+		groups = append(groups, groupName)
+	}
+	sort.Strings(groups)
+	return groups, points, nil
+}
+
 func nullFloatPointer(value sql.NullFloat64) *float64 {
 	if !value.Valid {
 		return nil
@@ -410,8 +676,13 @@ func (s *apiServer) collectMetricSnapshots(parent context.Context) {
 			cancel()
 			continue
 		}
+		groupStates, err := s.store.latestConsumerGroupMetricStates(ctx, connectionID)
+		if err != nil {
+			cancel()
+			continue
+		}
 		recordedAt := time.Now().UTC()
-		samples := collectConnectionMetricSamples(ctx, connection, monitored, states, recordedAt, latencyMs)
+		samples, groupSamples := collectConnectionMetricSamples(ctx, connection, monitored, states, groupStates, recordedAt, latencyMs)
 		if len(samples) == 0 {
 			samples = append(samples, streamMetricSample{
 				RecordedAt: recordedAt, ConnectionID: connectionID, StreamKey: "",
@@ -420,6 +691,9 @@ func (s *apiServer) collectMetricSnapshots(parent context.Context) {
 		}
 		if err := s.store.writeMetricSamples(ctx, samples); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf(`{"level":"warn","message":"Unable to store stream metrics","connection":%q,"error":%q}`, connectionID, err)
+		}
+		if err := s.store.writeConsumerGroupMetricSamples(ctx, groupSamples); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf(`{"level":"warn","message":"Unable to store consumer group metrics","connection":%q,"error":%q}`, connectionID, err)
 		}
 		cancel()
 	}
@@ -430,9 +704,10 @@ func collectConnectionMetricSamples(
 	connection *managedRedis,
 	monitored []monitoredStreamRecord,
 	states map[string]streamMetricState,
+	groupStates map[string]consumerGroupMetricState,
 	recordedAt time.Time,
 	latencyMs float64,
-) []streamMetricSample {
+) ([]streamMetricSample, []consumerGroupMetricSample) {
 	streamCommands := make([]*redis.XInfoStreamCmd, len(monitored))
 	groupCommands := make([]*redis.XInfoGroupsCmd, len(monitored))
 	_, _ = connection.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -443,6 +718,7 @@ func collectConnectionMetricSamples(
 		return nil
 	})
 	samples := make([]streamMetricSample, 0, len(monitored))
+	groupSamples := make([]consumerGroupMetricSample, 0)
 	for index, monitoredStream := range monitored {
 		streamInfo, err := streamCommands[index].Result()
 		if err != nil {
@@ -479,8 +755,72 @@ func collectConnectionMetricSamples(
 			ConsumeRate:     consumeRate,
 			LagDelta:        lagDelta,
 		})
+		for _, group := range groups {
+			lag := group.Lag
+			lagKnown := lag >= 0
+			if !lagKnown {
+				lag = 0
+			}
+			consumedTotal := group.EntriesRead
+			consumedKnown := consumedTotal >= 0
+			if !consumedKnown {
+				consumedTotal = 0
+			}
+			previousGroup := groupStates[consumerGroupMetricStateKey(monitoredStream.Key, group.Name)]
+			consumeRate, groupLagDelta := consumerGroupMetricRates(
+				recordedAt,
+				previousGroup,
+				consumedTotal,
+				lag,
+				consumedKnown,
+				lagKnown,
+			)
+			groupSamples = append(groupSamples, consumerGroupMetricSample{
+				RecordedAt:      recordedAt,
+				ConnectionID:    connection.config.ID,
+				StreamKey:       monitoredStream.Key,
+				GroupName:       group.Name,
+				ConsumerCount:   group.Consumers,
+				Pending:         group.Pending,
+				Lag:             lag,
+				LagKnown:        lagKnown,
+				LastDeliveredID: group.LastDeliveredID,
+				ConsumeDelayMs: observedConsumeDelay(recordedAt, group.LastDeliveredID, streamMetricState{
+					LastDeliveredID: previousGroup.LastDeliveredID,
+					ConsumeDelayMs:  previousGroup.ConsumeDelayMs,
+				}),
+				ConsumedTotal: consumedTotal,
+				ConsumeRate:   consumeRate,
+				LagDelta:      groupLagDelta,
+			})
+		}
 	}
-	return samples
+	return samples, groupSamples
+}
+
+func consumerGroupMetricRates(
+	recordedAt time.Time,
+	previous consumerGroupMetricState,
+	consumedTotal int64,
+	lag int64,
+	consumeKnown bool,
+	lagKnown bool,
+) (*float64, *float64) {
+	elapsed := recordedAt.Sub(previous.RecordedAt).Seconds()
+	if previous.RecordedAt.IsZero() || elapsed <= 0 || elapsed > 10 {
+		return nil, nil
+	}
+	var consumeRate *float64
+	if consumeKnown {
+		value := math.Max(0, float64(consumedTotal-previous.ConsumedTotal)/elapsed)
+		consumeRate = &value
+	}
+	var lagDelta *float64
+	if previous.LagKnown && lagKnown {
+		value := float64(lag-previous.Lag) / elapsed
+		lagDelta = &value
+	}
+	return consumeRate, lagDelta
 }
 
 func summarizeConsumerProgress(groups []redis.XInfoGroup) (int64, int64, bool) {
@@ -591,6 +931,46 @@ func (s *apiServer) metricSeries(writer http.ResponseWriter, request *http.Reque
 		"range":           rangeName,
 		"intervalSeconds": int(metricCollectionInterval.Seconds()),
 		"generatedAt":     until,
+		"items":           items,
+	})
+}
+
+func (s *apiServer) consumerGroupMetricSeries(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	streamKey, err := validateMonitoredStreamKey(request.URL.Query().Get("streamKey"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_stream_key", err.Error())
+		return
+	}
+	rangeName, duration, ok := metricRange(request.URL.Query().Get("range"))
+	if !ok {
+		writeError(writer, http.StatusBadRequest, "invalid_range", "range must be one of 1m, 5m, 15m, 1h, 6h, 24h or 7d")
+		return
+	}
+	until := time.Now().UTC()
+	groups, items, err := s.store.listConsumerGroupMetricSeries(
+		request.Context(),
+		connection.config.ID,
+		streamKey,
+		until.Add(-duration),
+		until,
+		metricMaxPoints,
+	)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "metrics_failed", "unable to load consumer group metrics")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"connectionId":    connection.config.ID,
+		"streamKey":       streamKey,
+		"range":           rangeName,
+		"intervalSeconds": int(metricCollectionInterval.Seconds()),
+		"generatedAt":     until,
+		"groups":          groups,
 		"items":           items,
 	})
 }
