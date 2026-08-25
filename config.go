@@ -50,6 +50,7 @@ type appConfig struct {
 	ConfigPath     string
 	SessionTTL     time.Duration
 	SecureCookies  bool
+	MetricsToken   string
 	Connections    []connectionConfig
 	MaxPageSize    int64
 	MaxLiveStreams int
@@ -71,6 +72,7 @@ func loadConfig() (appConfig, error) {
 		ConfigPath:     envOr("CONFIG_PATH", "/data/config.properties"),
 		SessionTTL:     12 * time.Hour,
 		SecureCookies:  envBool("SECURE_COOKIES", false),
+		MetricsToken:   strings.TrimSpace(os.Getenv("METRICS_TOKEN")),
 		MaxPageSize:    500,
 		MaxLiveStreams: 8,
 	}

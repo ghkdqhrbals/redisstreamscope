@@ -68,6 +68,17 @@ func main() {
 	}
 	metricsContext, stopMetrics := context.WithCancel(context.Background())
 	metricsDone := server.startMetricCollection(metricsContext)
+	operationalDone := server.startOperationalCollection(metricsContext)
+	insightsDone := server.startInsightCollection(metricsContext)
+	alertService, _, err := newAlertService(store, alertServiceOptions{})
+	if err != nil {
+		log.Fatalf("configure alert service: %v", err)
+	}
+	alertDone := make(chan struct{})
+	go func() {
+		defer close(alertDone)
+		alertService.Run(metricsContext, 5*time.Second, newRuntimeAlertObservationProvider(server.operationalMonitor(), store))
+	}()
 	httpServer := &http.Server{
 		Addr:              config.Addr,
 		Handler:           server,
@@ -92,9 +103,12 @@ func main() {
 	defer cancel()
 	stopMetrics()
 	_ = httpServer.Shutdown(ctx)
-	select {
-	case <-metricsDone:
-	case <-ctx.Done():
+	for _, done := range []<-chan struct{}{metricsDone, operationalDone, insightsDone, alertDone} {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

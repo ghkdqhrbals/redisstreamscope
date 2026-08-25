@@ -78,6 +78,99 @@ func TestConsumerGroupMetricSamplesAggregateByGroup(t *testing.T) {
 	}
 }
 
+func TestLatestConsumerGroupMetricSnapshotsUseLatestFreshSample(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+
+	ctx := context.Background()
+	first := time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC)
+	second := first.Add(time.Second)
+	delay := int64(425)
+	activeRate := 3.0
+	idleRate := 0.0
+	lagDelta := -2.0
+	samples := []consumerGroupMetricSample{
+		{RecordedAt: first, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-a", ConsumerCount: 2, Pending: 4, Lag: 9, LagKnown: true, LastDeliveredID: "1000-0", ConsumeDelayMs: &delay, ConsumedTotal: 10, ConsumeRate: &activeRate},
+		{RecordedAt: second, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-a", ConsumerCount: 3, Pending: 1, Lag: 5, LagKnown: true, LastDeliveredID: "2000-0", ConsumeDelayMs: &delay, ConsumedTotal: 13, ConsumeRate: &idleRate, LagDelta: &lagDelta},
+		{RecordedAt: second, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers-unknown", ConsumerCount: 1, Pending: 2, Lag: 0, LagKnown: false, LastDeliveredID: "2000-0", ConsumedTotal: 2, ConsumeRate: &idleRate},
+		{RecordedAt: second, ConnectionID: "other", StreamKey: "orders", GroupName: "workers-a", ConsumerCount: 9, Pending: 9, Lag: 9, LagKnown: true, LastDeliveredID: "2000-0", ConsumedTotal: 9, ConsumeRate: &activeRate},
+	}
+	if err := store.writeConsumerGroupMetricSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := store.listLatestConsumerGroupMetricSnapshots(ctx, "redis", first.Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items=%d, want 2: %+v", len(items), items)
+	}
+	workers := items[0]
+	if workers.GroupName != "workers-a" || workers.ConsumerCount != 3 || workers.Pending != 1 || workers.Lag == nil || *workers.Lag != 5 {
+		t.Fatalf("latest workers snapshot=%+v", workers)
+	}
+	if workers.ConsumeDelayMs == nil || *workers.ConsumeDelayMs != delay || workers.LagDelta == nil || *workers.LagDelta != lagDelta {
+		t.Fatalf("latest workers metrics=%+v", workers)
+	}
+	if workers.LastActivityAt == nil || !workers.LastActivityAt.Equal(first) {
+		t.Fatalf("last activity=%v, want %v", workers.LastActivityAt, first)
+	}
+	if items[1].Lag != nil {
+		t.Fatalf("unknown lag must remain null: %+v", items[1])
+	}
+
+	stale, err := store.listLatestConsumerGroupMetricSnapshots(ctx, "redis", second.Add(time.Second))
+	if err != nil || len(stale) != 0 {
+		t.Fatalf("stale snapshots=%+v err=%v", stale, err)
+	}
+}
+
+func TestLatestConsumerGroupMetricSnapshotsKeepRollupActivity(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+
+	ctx := context.Background()
+	first := time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC)
+	activeRate := 1.0
+	idleRate := 0.0
+	if err := store.writeConsumerGroupMetricSamples(ctx, []consumerGroupMetricSample{{
+		RecordedAt: first, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers",
+		ConsumerCount: 1, Lag: 1, LagKnown: true, LastDeliveredID: "1000-0", ConsumedTotal: 1, ConsumeRate: &activeRate,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.maintainMetricSamples(ctx, first.Add(61*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.maintainMetricSamples(ctx, first.Add(64*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	current := first.Add(65 * time.Minute)
+	if err := store.writeConsumerGroupMetricSamples(ctx, []consumerGroupMetricSample{{
+		RecordedAt: current, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers",
+		ConsumerCount: 1, Lag: 0, LagKnown: true, LastDeliveredID: "2000-0", ConsumedTotal: 1, ConsumeRate: &idleRate,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := store.listLatestConsumerGroupMetricSnapshots(ctx, "redis", current.Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].LastActivityAt == nil || !items[0].LastActivityAt.Equal(first) {
+		t.Fatalf("rollup activity snapshot=%+v", items)
+	}
+}
+
 func TestMetricSamplesAggregateAndFilterByStream(t *testing.T) {
 	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
 	store, err := openStore(config)
