@@ -138,6 +138,7 @@ func (s *apiServer) routes() {
 	s.mux.Handle("GET /api/groups", s.protect("groups:read", s.groups))
 	s.mux.Handle("GET /api/consumers", s.protect("groups:read", s.consumers))
 	s.mux.Handle("GET /api/pending", s.protect("groups:read", s.pending))
+	s.mux.Handle("GET /api/message-delivery", s.protect("groups:read", s.messageDelivery))
 	s.mux.Handle("GET /api/tail", s.protect("streams:read", s.tail))
 	s.mux.Handle("POST /api/actions", s.protect("streams:read", s.action))
 	s.mux.Handle("POST /api/recovery/plans", s.protect("groups:read", s.recoveryPlan))

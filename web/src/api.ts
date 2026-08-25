@@ -1,4 +1,4 @@
-import type { AlertEscalationPolicy, AlertEscalationPolicyInput, AlertIncident, AlertMetricDefinition, AlertRule, AlertRuleInput, AlertSummary, AlertSuppression, AlertSuppressionInput, AlertWebhookDelivery, AlertWebhookRoute, AlertWebhookRouteInput, ApiSession, CapacityForecast, ConsumerGroup, ConsumerGroupMetricSeries, ConsumerGroupMetricSnapshot, ConsumerHistoryResponse, ConsumerInfo, DashboardDefinition, LifecycleMetrics, LifecycleRequest, MonitoringEvent, OperationalSnapshot, OverviewStreamItem, PendingEntry, QuarantineInput, QuarantinePlan, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, RedisConnection, RedisConnectionConfig, RedisEntry, RetentionPolicy, SavedDashboard, StreamItem, StreamMetricSeries, StreamSchemaAnalysis, TelemetryToken, TopologyModel, TraceSpan, TraceSummary } from "./types";
+import type { AlertEscalationPolicy, AlertEscalationPolicyInput, AlertIncident, AlertMetricDefinition, AlertRule, AlertRuleInput, AlertSummary, AlertSuppression, AlertSuppressionInput, AlertWebhookDelivery, AlertWebhookRoute, AlertWebhookRouteInput, ApiSession, CapacityForecast, ConsumerGroup, ConsumerGroupMetricSeries, ConsumerGroupMetricSnapshot, ConsumerHistoryResponse, ConsumerInfo, DashboardDefinition, LifecycleMetrics, LifecycleRequest, MessageDelivery, MonitoringEvent, OperationalSnapshot, OverviewStreamItem, PendingEntry, QuarantineInput, QuarantinePlan, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, RedisConnection, RedisConnectionConfig, RedisEntry, RetentionPolicy, SavedDashboard, StreamItem, StreamMetricSeries, StreamSchemaAnalysis, TelemetryToken, TopologyModel, TraceSpan, TraceSummary } from "./types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -185,6 +185,10 @@ export const api = {
   entries: (connectionId: string, key: string, limit = 100, start = "+") =>
     request<{ items: RedisEntry[]; nextCursor: string; hasMore: boolean }>(
       `/api/entries?connectionId=${encodeURIComponent(connectionId)}&key=${encodeURIComponent(key)}&start=${encodeURIComponent(start)}&limit=${limit}`,
+    ),
+  messageDelivery: (connectionId: string, key: string, id: string) =>
+    request<MessageDelivery>(
+      `/api/message-delivery?connectionId=${encodeURIComponent(connectionId)}&key=${encodeURIComponent(key)}&id=${encodeURIComponent(id)}`,
     ),
   groups: (connectionId: string, key: string) =>
     request<{ items: ConsumerGroup[] }>(
