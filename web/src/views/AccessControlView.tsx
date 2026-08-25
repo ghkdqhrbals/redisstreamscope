@@ -5,7 +5,6 @@ import {
   Download,
   KeyRound,
   LockKeyhole,
-  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -31,30 +30,80 @@ type AccessUser = {
 };
 
 type Grant = { id: number; userId: string; action: string; scope: string; effect: "allow" | "deny" };
+type LogResult = "all" | "allowed" | "denied";
+type AccessLogPage = {
+  items: Array<Record<string, string | number>>;
+  nextCursor: number | null;
+  hasMore: boolean;
+  summary: { total: number; allowed: number; denied: number };
+};
+
+const emptyLogPage: AccessLogPage = { items: [], nextCursor: null, hasMore: false, summary: { total: 0, allowed: 0, denied: 0 } };
+
+const rolePermissions: Record<string, string[]> = {
+  viewer: ["connections:read", "streams:read", "groups:read", "alerts:read"],
+  operator: ["connections:read", "streams:read", "streams:write", "groups:read", "groups:manage", "alerts:read"],
+  admin: ["*"],
+};
+
+function roleName(role: string) {
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function permissionDiff(fromRole: string, toRole: string) {
+  if (fromRole === toRole) return { added: [] as string[], removed: [] as string[] };
+  if (toRole === "admin") return { added: ["Full administrative access (*)"], removed: [] as string[] };
+  if (fromRole === "admin") return { added: [] as string[], removed: ["Full administrative access (*)"] };
+  const from = new Set(rolePermissions[fromRole] ?? []);
+  const to = new Set(rolePermissions[toRole] ?? []);
+  return {
+    added: [...to].filter((permission) => !from.has(permission)),
+    removed: [...from].filter((permission) => !to.has(permission)),
+  };
+}
 
 export function AccessControlView({ onToast }: { onToast: (toast: ToastState) => void }) {
   const { locale, t } = useI18n();
   const [tab, setTab] = useState<"users" | "roles" | "logs">("users");
   const [users, setUsers] = useState<AccessUser[]>([]);
-  const [logs, setLogs] = useState<Array<Record<string, string | number>>>([]);
+  const [logPage, setLogPage] = useState<AccessLogPage>(emptyLogPage);
+  const [logCursor, setLogCursor] = useState<number | null>(null);
+  const [logCursorHistory, setLogCursorHistory] = useState<Array<number | null>>([]);
+  const [logSearch, setLogSearch] = useState("");
+  const [logLoading, setLogLoading] = useState(false);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [logResult, setLogResult] = useState<LogResult>("all");
   const [showCreate, setShowCreate] = useState(false);
   const [editingUser, setEditingUser] = useState<AccessUser | null>(null);
 
-  const load = useCallback(() => {
-    Promise.all([api.users(), api.accessLogs(), api.grants()])
-      .then(([userResponse, logResponse, grantResponse]) => {
+  const loadAdministration = useCallback(() => {
+    Promise.all([api.users(), api.grants()])
+      .then(([userResponse, grantResponse]) => {
         setUsers(userResponse.items);
-        setLogs(logResponse.items);
         setGrants(grantResponse.items);
       })
       .catch((error) => onToast({ kind: "error", title: t("Access data unavailable"), message: error instanceof Error ? t(error.message) : t("Unable to load administration data.") }));
   }, [onToast, t]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadLogs = useCallback(async () => {
+    setLogLoading(true);
+    try {
+      setLogPage(await api.accessLogs({ limit: 100, cursor: logCursor, search: logSearch, result: logResult }));
+    } catch (error) {
+      onToast({ kind: "error", title: t("Access data unavailable"), message: error instanceof Error ? t(error.message) : t("Unable to load administration data.") });
+    } finally {
+      setLogLoading(false);
+    }
+  }, [logCursor, logResult, logSearch, onToast, t]);
+
+  useEffect(() => { loadAdministration(); }, [loadAdministration]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadLogs(); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [loadLogs]);
 
   const filteredUsers = useMemo(
     () => users.filter((user) =>
@@ -64,20 +113,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
     [roleFilter, search, statusFilter, users],
   );
 
-  const updateRole = async (user: AccessUser, role: string) => {
-    setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role } : item));
-    try {
-      const updated = await api.updateUser(user.id, { username: user.username, displayName: user.displayName, role, enabled: user.enabled });
-      setUsers((current) => current.map((item) => item.id === user.id ? updated : item));
-      onToast({ kind: "success", title: t("Role updated"), message: t("Changed {username}'s base role to {role}.", { username: user.username, role }) });
-    } catch (error) {
-      setUsers((current) => current.map((item) => item.id === user.id ? user : item));
-      onToast({ kind: "error", title: t("Role update failed"), message: error instanceof Error ? t(error.message) : t("Unable to change the role.") });
-    }
-  };
-
-  const allowedRequests = logs.filter((log) => Number(log.status) < 400).length;
-  const allowedPercent = logs.length ? ((allowedRequests / logs.length) * 100).toFixed(1) : "0.0";
+  const deniedRequests = logPage.summary.denied;
   const userColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "user", label: t("User"), defaultWidth: 230, minWidth: 170, grow: true },
     { id: "role", label: t("Role"), defaultWidth: 125, minWidth: 105 },
@@ -97,7 +133,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
         <div><UsersRound size={17} /><span>{t("Users")}</span><strong>{users.length}</strong><em>{t("{count} active", { count: users.filter((user) => user.enabled).length })}</em></div>
         <div><UserRoundCog size={17} /><span>{t("Administrators")}</span><strong>{users.filter((user) => user.role === "admin").length}</strong><em>{t("Full access")}</em></div>
         <div><KeyRound size={17} /><span>{t("Custom grants")}</span><strong>{grants.length}</strong><em>{t("{count} explicit deny", { count: grants.filter((grant) => grant.effect === "deny").length })}</em></div>
-        <div><Activity size={17} /><span>{t("Recent requests")}</span><strong>{logs.length}</strong><em className="green">{t("{percent}% allowed", { percent: allowedPercent })}</em></div>
+        <div className="access-summary-link"><button type="button" aria-label={t("Open denied access logs")} onClick={() => { setLogCursor(null); setLogCursorHistory([]); setLogResult("denied"); setTab("logs"); }}><Activity size={17} /><span>{t("Denied requests")}</span><strong>{deniedRequests}</strong><em>{t("of {count} matching requests", { count: logPage.summary.allowed + logPage.summary.denied })}</em></button></div>
       </div>
       <div className="content-tabs access-tabs">
         <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>{t("Users")}</button>
@@ -112,11 +148,11 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
             {filteredUsers.map((user) => (
               <div className="user-row" key={user.id}>
                 <span className="user-identity"><i>{user.displayName.slice(0, 2).toUpperCase()}</i><span><strong>{user.displayName}</strong><em>{user.username}</em></span></span>
-                <span><select value={user.role} aria-label={`${t("Role")} · ${user.username}`} onChange={(event) => updateRole(user, event.target.value)}><option value="viewer">{t("Viewer")}</option><option value="operator">{t("Operator")}</option><option value="admin">{t("Admin")}</option></select></span>
+                <span className="user-role">{t(roleName(user.role))}</span>
                 <span className="scope-list">{user.role === "admin" ? <b>{t("All resources")}</b> : user.role === "operator" ? <b>{t("Configured Redis resources")}</b> : <b>{t("Read only")}</b>}</span>
                 <span>{user.lastLoginAt ? formatTime(user.lastLoginAt, locale) : t("Never")}</span>
                 <span className={user.enabled ? "user-status active" : "user-status"}><i />{user.enabled ? t("Active") : t("Disabled")}</span>
-                <button aria-label={t("Manage {username}", { username: user.username })} onClick={() => setEditingUser(user)}><MoreHorizontal size={16} /></button>
+                <button aria-label={t("Edit {username}", { username: user.username })} onClick={() => setEditingUser(user)}><Pencil size={15} /></button>
               </div>
             ))}
             {!filteredUsers.length ? <div className="grant-empty">{t("No users match the filters.")}</div> : null}
@@ -125,7 +161,26 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
       ) : null}
 
       {tab === "roles" ? <RolesPanel users={users} grants={grants} onGrantsChange={setGrants} onToast={onToast} /> : null}
-      {tab === "logs" ? <LogsPanel logs={logs} onRefresh={load} /> : null}
+      {tab === "logs" ? <LogsPanel
+        page={logPage}
+        loading={logLoading}
+        search={logSearch}
+        onSearchChange={(value) => { setLogSearch(value); setLogCursor(null); setLogCursorHistory([]); }}
+        onRefresh={() => void loadLogs()}
+        result={logResult}
+        onResultChange={(value) => { setLogResult(value); setLogCursor(null); setLogCursorHistory([]); }}
+        pageNumber={logCursorHistory.length + 1}
+        onPrevious={() => {
+          const previous = logCursorHistory.at(-1) ?? null;
+          setLogCursorHistory((current) => current.slice(0, -1));
+          setLogCursor(previous);
+        }}
+        onNext={() => {
+          if (!logPage.nextCursor) return;
+          setLogCursorHistory((current) => [...current, logCursor]);
+          setLogCursor(logPage.nextCursor);
+        }}
+      /> : null}
       {showCreate ? <CreateUserModal onClose={() => setShowCreate(false)} onCreated={(user) => { setUsers((current) => [...current, user]); setShowCreate(false); onToast({ kind: "success", title: t("User created"), message: t("Created account {username}.", { username: user.username }) }); }} /> : null}
       {editingUser ? <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} onSaved={(next) => { setUsers((current) => current.map((item) => item.id === next.id ? next : item)); setEditingUser(null); onToast({ kind: "success", title: t("User updated"), message: t("Updated account and sessions for {username}.", { username: next.username }) }); }} /> : null}
     </div>
@@ -141,6 +196,7 @@ function EditUserModal({ user, onClose, onSaved }: { user: AccessUser; onClose: 
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const diff = permissionDiff(user.role, role);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -160,6 +216,12 @@ function EditUserModal({ user, onClose, onSaved }: { user: AccessUser; onClose: 
         <header><h2>{t("Manage user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
         <div className="field-pair"><label>{t("Username")}<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
         <div className="field-pair"><label>{t("Basic role")}<select value={role} onChange={(event) => setRole(event.target.value)}><option value="viewer">{t("Viewer")}</option><option value="operator">{t("Operator")}</option><option value="admin">{t("Admin")}</option></select></label><label>{t("Status")}<select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")}><option value="enabled">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></label></div>
+        {role !== user.role ? <section className="role-change-diff" aria-live="polite">
+          <header><strong>{t("Role change")}</strong><span>{t(roleName(user.role))} → {t(roleName(role))}</span></header>
+          {diff.added.length ? <div><span>{t("Added permissions")}</span><ul>{diff.added.map((permission) => <li className="mono" key={permission}>+ {t(permission)}</li>)}</ul></div> : null}
+          {diff.removed.length ? <div><span>{t("Removed permissions")}</span><ul>{diff.removed.map((permission) => <li className="mono" key={permission}>− {t(permission)}</li>)}</ul></div> : null}
+          <p>{t("Resulting base permissions")}: <span className="mono">{rolePermissions[role]?.map((permission) => t(permission)).join(", ")}</span></p>
+        </section> : null}
         <label>{t("Reset password")}<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t("Leave blank to keep current password")} /></label>
         <div className="role-explainer"><LockKeyhole size={15} /><span>{t("Disabling a user or resetting the password revokes all sessions. The last active administrator cannot be disabled or demoted.")}</span></div>
         {error ? <div className="login-error" role="alert">{error}</div> : null}
@@ -245,7 +307,7 @@ function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[];
       <form className="modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <header><h2>{initial ? t("Edit resource permission") : t("Add resource permission")}</h2><button type="button" onClick={onClose} aria-label={t("Close permission dialog")}><X size={18} /></button></header>
         <div className="field-pair"><label>{t("User")}<select value={userId} onChange={(event) => setUserId(event.target.value)}>{users.filter((user) => user.role !== "admin").map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label><label>{t("Effect")}<select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")}><option value="allow">{t("Allow")}</option><option value="deny">{t("Deny")}</option></select></label></div>
-        <label>{t("Action")}<select value={action} onChange={(event) => setAction(event.target.value)}><option>streams:read</option><option>streams:write</option><option>groups:read</option><option>groups:manage</option><option>connections:read</option></select></label>
+        <label>{t("Action")}<select value={action} onChange={(event) => setAction(event.target.value)}><option>streams:read</option><option>streams:write</option><option>groups:read</option><option>groups:manage</option><option>connections:read</option><option>alerts:read</option><option>alerts:write</option><option>settings:read</option><option>settings:write</option><option>access-logs:read</option><option>users:read</option><option>users:write</option><option>roles:read</option><option>roles:write</option></select></label>
         <label>{t("Scope")}<input className="mono" value={scope} onChange={(event) => setScope(event.target.value)} placeholder="stream:redis:orders.*" required /></label>
         <div className="role-explainer"><ShieldCheck size={15} /><span>{t("An explicit Deny overrides the base role and Allow. Wildcards are supported only as a trailing *.")}</span></div>
         {error ? <div className="login-error" role="alert">{error}</div> : null}
@@ -255,15 +317,19 @@ function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[];
   );
 }
 
-function LogsPanel({ logs, onRefresh }: { logs: Array<Record<string, string | number>>; onRefresh: () => void }) {
+function LogsPanel({ page, loading, search, onSearchChange, onRefresh, result, onResultChange, pageNumber, onPrevious, onNext }: {
+  page: AccessLogPage;
+  loading: boolean;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onRefresh: () => void;
+  result: LogResult;
+  onResultChange: (result: LogResult) => void;
+  pageNumber: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
   const { locale, t } = useI18n();
-  const [search, setSearch] = useState("");
-  const [result, setResult] = useState("all");
-  const filtered = logs.filter((log) => {
-    const matchesText = Object.values(log).join(" ").toLowerCase().includes(search.toLowerCase());
-    const allowed = Number(log.status) < 400;
-    return matchesText && (result === "all" || (result === "allowed" ? allowed : !allowed));
-  });
   const logColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "time", label: t("Time"), defaultWidth: 170, minWidth: 130 },
     { id: "user", label: t("User"), defaultWidth: 130, minWidth: 100 },
@@ -274,15 +340,19 @@ function LogsPanel({ logs, onRefresh }: { logs: Array<Record<string, string | nu
   ], [t]);
   return (
     <section className="access-surface">
-      <div className="access-toolbar"><button onClick={onRefresh}><RefreshCw size={13} />{t("Refresh")}</button><label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("User, action, scope, IP…")} /></label><select value={result} onChange={(event) => setResult(event.target.value)}><option value="all">{t("All results")}</option><option value="allowed">{t("Allowed")}</option><option value="denied">{t("Denied")}</option></select><button onClick={() => exportAuditLogs(filtered)}><Download size={13} />{t("Export CSV")}</button></div>
+      <div className="access-toolbar"><button onClick={onRefresh} disabled={loading}><RefreshCw size={13} />{loading ? t("Loading…") : t("Refresh")}</button><label><Search size={14} /><input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder={t("User, action, scope, IP…")} /></label><select value={result} onChange={(event) => onResultChange(event.target.value as LogResult)}><option value="all">{t("All results")}</option><option value="allowed">{t("Allowed")}</option><option value="denied">{t("Denied")}</option></select><button onClick={() => exportAuditLogs(page.items)}><Download size={13} />{t("Export page")}</button></div>
       <ResizableGrid className="logs-table" storageKey="access-logs" columns={logColumns} headerClassName="logs-head">
-        {filtered.map((log, index) => (
+        {page.items.map((log, index) => (
           <div className="log-row" key={`${log.requestId ?? index}-${index}`}>
             <span className="mono">{formatTime(String(log.createdAt), locale)}</span><strong>{String(log.username)}</strong><span className="mono">{String(log.action)}</span><span className="mono log-scope">{String(log.scope)}</span><span className={Number(log.status) < 400 ? "log-result allowed" : "log-result denied"}>{Number(log.status) < 400 ? t("Allowed") : t("Denied")} · {log.status}</span><span className="mono">{String(log.ip)}</span>
           </div>
         ))}
-        {!filtered.length ? <div className="grant-empty">{t("No audit logs match the filters.")}</div> : null}
+        {!page.items.length && !loading ? <div className="grant-empty">{t("No audit logs match the filters.")}</div> : null}
       </ResizableGrid>
+      <footer className="table-footer access-log-pagination">
+        <span>{t("{count} matching requests", { count: page.summary.total.toLocaleString(locale) })}</span>
+        <div><button type="button" onClick={onPrevious} disabled={pageNumber <= 1 || loading}>{t("Previous")}</button><strong>{t("Page {page}", { page: pageNumber })}</strong><button type="button" onClick={onNext} disabled={!page.hasMore || loading}>{t("Next")}</button></div>
+      </footer>
     </section>
   );
 }

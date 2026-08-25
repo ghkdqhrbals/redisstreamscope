@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -70,8 +71,17 @@ type monitoredStreamRecord struct {
 }
 
 type store struct {
-	db *sql.DB
+	db                    *sql.DB
+	permissionGrantQuery  permissionGrantQueryFunc
+	prometheusMu          sync.Mutex
+	prometheusCachedAt    time.Time
+	prometheusCachedValue string
 }
+
+const (
+	accessLogRetention     = int64(100_000)
+	accessLogPruneInterval = int64(256)
+)
 
 func migrateLegacyDatabase(legacyPath, currentPath string) error {
 	if legacyPath == currentPath {
@@ -264,6 +274,11 @@ func (s *store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS consumer_group_metric_samples_lookup_idx
 			ON consumer_group_metric_samples(connection_id, stream_key, group_name, recorded_at)`,
+		`CREATE INDEX IF NOT EXISTS consumer_group_metric_samples_connection_time_idx
+			ON consumer_group_metric_samples(connection_id, recorded_at)`,
+		`CREATE INDEX IF NOT EXISTS consumer_group_metric_samples_activity_idx
+			ON consumer_group_metric_samples(connection_id, stream_key, group_name, recorded_at)
+			WHERE consume_rate>0`,
 		`CREATE TABLE IF NOT EXISTS consumer_group_metric_rollups (
 			recorded_at TEXT NOT NULL,
 			connection_id TEXT NOT NULL,
@@ -280,6 +295,9 @@ func (s *store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS consumer_group_metric_rollups_lookup_idx
 			ON consumer_group_metric_rollups(connection_id, stream_key, recorded_at)`,
+		`CREATE INDEX IF NOT EXISTS consumer_group_metric_rollups_activity_idx
+			ON consumer_group_metric_rollups(connection_id, stream_key, group_name, recorded_at)
+			WHERE consume_rate>0`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -303,6 +321,18 @@ func (s *store) migrate(ctx context.Context) error {
 			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return fmt.Errorf("database migration: %w", err)
 		}
+	}
+	if err := s.migrateLifecycleTelemetry(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateInsights(ctx); err != nil {
+		return err
+	}
+	if err := initRecoverySchema(ctx, s); err != nil {
+		return err
+	}
+	if err := initAlertSchema(ctx, s); err != nil {
+		return err
 	}
 	return nil
 }
@@ -732,62 +762,190 @@ func (s *store) updateGrant(ctx context.Context, id int64, grant grantRecord) (g
 
 func (s *store) writeAccessLog(ctx context.Context, log accessLog) {
 	details, _ := json.Marshal(log.Details)
-	_, _ = s.db.ExecContext(ctx, `INSERT INTO access_logs(created_at,user_id,username,method,path,action,scope,status,duration_ms,ip,user_agent,request_id,details_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	result, err := s.db.ExecContext(ctx, `INSERT INTO access_logs(created_at,user_id,username,method,path,action,scope,status,duration_ms,ip,user_agent,request_id,details_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		time.Now().UTC().Format(time.RFC3339Nano), nullIfEmpty(log.UserID), log.Username, log.Method, truncate(log.Path, 512), log.Action, log.Scope, log.Status, log.Duration.Milliseconds(), log.IP, truncate(log.UserAgent, 256), log.RequestID, string(details))
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM access_logs WHERE id IN (SELECT id FROM access_logs ORDER BY id DESC LIMIT -1 OFFSET 100000)`)
+	if err != nil {
+		return
+	}
+	id, err := result.LastInsertId()
+	if err == nil && shouldPruneAccessLogs(id) {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM access_logs WHERE id IN (SELECT id FROM access_logs ORDER BY id DESC LIMIT -1 OFFSET ?)`, accessLogRetention)
+	}
+}
+
+func shouldPruneAccessLogs(lastID int64) bool {
+	return lastID > accessLogRetention && lastID%accessLogPruneInterval == 0
 }
 
 func (s *store) listAccessLogs(ctx context.Context, limit int) ([]map[string]any, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,created_at,username,method,path,action,scope,status,duration_ms,ip,request_id FROM access_logs ORDER BY id DESC LIMIT ?`, limit)
+	page, err := s.listAccessLogPage(ctx, accessLogQuery{Limit: limit})
 	if err != nil {
 		return nil, err
 	}
+	return page.Items, nil
+}
+
+type accessLogQuery struct {
+	Limit  int
+	Cursor int64
+	Search string
+	Result string
+}
+
+type accessLogPage struct {
+	Items      []map[string]any
+	NextCursor int64
+	HasMore    bool
+	Total      int64
+	Allowed    int64
+	Denied     int64
+}
+
+func (s *store) listAccessLogPage(ctx context.Context, query accessLogQuery) (accessLogPage, error) {
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = 100
+	}
+	query.Search = strings.TrimSpace(query.Search)
+	if len(query.Search) > 200 {
+		query.Search = query.Search[:200]
+	}
+	if query.Result != "allowed" && query.Result != "denied" {
+		query.Result = "all"
+	}
+
+	searchWhere, searchArgs := accessLogSearchClause(query.Search)
+	where := append([]string(nil), searchWhere...)
+	args := append([]any(nil), searchArgs...)
+	if query.Result == "allowed" {
+		where = append(where, "status < 400")
+	} else if query.Result == "denied" {
+		where = append(where, "status >= 400")
+	}
+	if query.Cursor > 0 {
+		where = append(where, "id < ?")
+		args = append(args, query.Cursor)
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = " WHERE " + strings.Join(where, " AND ")
+	}
+	args = append(args, query.Limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,created_at,username,method,path,action,scope,status,duration_ms,ip,request_id FROM access_logs`+whereSQL+` ORDER BY id DESC LIMIT ?`, args...)
+	if err != nil {
+		return accessLogPage{}, err
+	}
 	defer rows.Close()
-	result := make([]map[string]any, 0, limit)
+	result := make([]map[string]any, 0, query.Limit+1)
 	for rows.Next() {
 		var id, status, duration int64
 		var created, username, method, path, action, scope, ip, requestID string
 		if err := rows.Scan(&id, &created, &username, &method, &path, &action, &scope, &status, &duration, &ip, &requestID); err != nil {
-			return nil, err
+			return accessLogPage{}, err
 		}
 		result = append(result, map[string]any{"id": id, "createdAt": created, "username": username, "method": method, "path": path, "action": action, "scope": scope, "status": status, "durationMs": duration, "ip": ip, "requestId": requestID})
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return accessLogPage{}, err
+	}
+
+	page := accessLogPage{Items: result}
+	if len(result) > query.Limit {
+		page.Items = result[:query.Limit]
+		page.HasMore = true
+		page.NextCursor = page.Items[len(page.Items)-1]["id"].(int64)
+	}
+
+	summaryWhere := ""
+	if len(searchWhere) > 0 {
+		summaryWhere = " WHERE " + strings.Join(searchWhere, " AND ")
+	}
+	var allCount, allowedCount, deniedCount int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),0) FROM access_logs`+summaryWhere, searchArgs...).Scan(&allCount, &allowedCount, &deniedCount); err != nil {
+		return accessLogPage{}, err
+	}
+	page.Allowed = allowedCount
+	page.Denied = deniedCount
+	switch query.Result {
+	case "allowed":
+		page.Total = allowedCount
+	case "denied":
+		page.Total = deniedCount
+	default:
+		page.Total = allCount
+	}
+	return page, nil
+}
+
+func accessLogSearchClause(search string) ([]string, []any) {
+	if search == "" {
+		return nil, nil
+	}
+	pattern := "%" + strings.ToLower(search) + "%"
+	return []string{`(LOWER(username) LIKE ? OR LOWER(method) LIKE ? OR LOWER(path) LIKE ? OR LOWER(action) LIKE ? OR LOWER(scope) LIKE ? OR LOWER(ip) LIKE ? OR LOWER(request_id) LIKE ?)`},
+		[]any{pattern, pattern, pattern, pattern, pattern, pattern, pattern}
 }
 
 func (s *store) allowed(ctx context.Context, session sessionRecord, action, scope string) bool {
-	if session.Role == "admin" {
+	checker, err := s.permissionChecker(ctx, session, action)
+	return err == nil && checker.allows(action, scope)
+}
+
+var uiPermissionActions = []string{
+	"profile:write", "connections:read", "streams:read", "streams:write",
+	"groups:read", "groups:manage", "alerts:read", "alerts:write",
+	"settings:read", "settings:write", "access-logs:read",
+	"users:read", "users:write", "roles:read", "roles:write",
+}
+
+func roleAllows(role, action string) bool {
+	if role == "admin" || action == "profile:write" {
 		return true
 	}
-	base := action == "profile:write"
-	switch session.Role {
+	switch role {
 	case "viewer":
-		base = base || action == "connections:read" || action == "streams:read" || action == "groups:read"
+		return action == "connections:read" || action == "streams:read" || action == "groups:read" || action == "alerts:read"
 	case "operator":
-		base = base || action == "connections:read" || action == "streams:read" || action == "groups:read" || action == "streams:write" || action == "groups:manage"
+		return action == "connections:read" || action == "streams:read" || action == "groups:read" || action == "streams:write" || action == "groups:manage" || action == "alerts:read"
+	default:
+		return false
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT action, scope, effect FROM user_grants WHERE user_id=?`, session.UserID)
+}
+
+// effectivePermissionActions is an advisory capability summary for rendering
+// controls. The protected API remains authoritative for the request's exact
+// connection/stream scope. A scoped Allow exposes the control, while a global
+// Deny suppresses it.
+func (s *store) effectivePermissionActions(ctx context.Context, session sessionRecord) []string {
+	if session.Role == "admin" {
+		return []string{"*"}
+	}
+	grants, err := s.loadPermissionGrants(ctx, session.UserID)
 	if err != nil {
-		return base
+		// This list controls which privileged UI actions are exposed. When the
+		// grant store is unavailable, advertise no capability rather than the
+		// role baseline, which may have been narrowed by a grant we could not load.
+		return []string{}
 	}
-	defer rows.Close()
-	allowed := base
-	for rows.Next() {
-		var grantAction, grantScope, effect string
-		if rows.Scan(&grantAction, &grantScope, &effect) != nil {
-			continue
-		}
-		if wildcardMatch(grantAction, action) && wildcardMatch(grantScope, scope) {
-			if effect == "deny" {
-				return false
+	result := make([]string, 0, len(uiPermissionActions))
+	for _, action := range uiPermissionActions {
+		allowed := roleAllows(session.Role, action)
+		globalDeny := false
+		for _, item := range grants {
+			if !wildcardMatch(item.action, action) {
+				continue
 			}
-			allowed = true
+			if item.effect == "allow" {
+				allowed = true
+			}
+			if item.effect == "deny" && item.scope == "*" {
+				globalDeny = true
+			}
+		}
+		if allowed && !globalDeny {
+			result = append(result, action)
 		}
 	}
-	return allowed
+	return result
 }
 
 func randomID(bytes int) (string, error) {

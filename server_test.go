@@ -215,6 +215,19 @@ func TestXAddArgsSupportMaxLenModes(t *testing.T) {
 	}
 }
 
+func TestActionPermissionSeparatesStreamAndConsumerGroupMutations(t *testing.T) {
+	for _, action := range []string{"xack", "xclaim", "xautoclaim", "xgroup-create", "xgroup-setid", "xgroup-destroy"} {
+		if permission := actionPermission(action); permission != "groups:manage" {
+			t.Errorf("actionPermission(%q)=%q, want groups:manage", action, permission)
+		}
+	}
+	for _, action := range []string{"xadd", "xdel", "xtrim"} {
+		if permission := actionPermission(action); permission != "streams:write" {
+			t.Errorf("actionPermission(%q)=%q, want streams:write", action, permission)
+		}
+	}
+}
+
 func TestSummarizeOverviewGroups(t *testing.T) {
 	groups := []redis.XInfoGroup{
 		{Name: "orders", Pending: 3, Lag: 7, LastDeliveredID: "1722235000000-4"},

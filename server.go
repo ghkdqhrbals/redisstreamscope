@@ -92,6 +92,9 @@ func newAPIServer(config appConfig, store *store, manager *redisManager, assets 
 func (s *apiServer) routes() {
 	s.mux.HandleFunc("GET /health/live", s.healthLive)
 	s.mux.HandleFunc("GET /health/ready", s.healthReady)
+	if strings.TrimSpace(s.config.MetricsToken) != "" {
+		s.mux.HandleFunc("GET /metrics", s.prometheusMetrics)
+	}
 	s.mux.HandleFunc("GET /api/setup/status", s.setupStatus)
 	s.mux.HandleFunc("POST /api/setup/test-redis", s.setupTestRedis)
 	s.mux.HandleFunc("POST /api/setup", s.setup)
@@ -108,6 +111,25 @@ func (s *apiServer) routes() {
 	s.mux.Handle("GET /api/overview", s.protect("streams:read", s.overview))
 	s.mux.Handle("GET /api/metrics/timeseries", s.protect("streams:read", s.metricSeries))
 	s.mux.Handle("GET /api/metrics/consumer-groups", s.protect("groups:read", s.consumerGroupMetricSeries))
+	s.mux.Handle("GET /api/metrics/consumer-groups/latest", s.protect("groups:read", s.latestConsumerGroupMetrics))
+	s.mux.Handle("GET /api/operations/snapshot", s.protect("streams:read", s.operationsSnapshot))
+	s.mux.Handle("GET /api/operations/consumer-history", s.protect("groups:read", s.consumerHistory))
+	s.mux.Handle("GET /api/operations/topology", s.protect("connections:read", s.topology))
+	s.mux.Handle("GET /api/operations/topology/events", s.protect("connections:read", s.topologyEvents))
+	s.mux.Handle("GET /api/operations/capacity", s.protect("streams:read", s.capacityForecast))
+	s.mux.Handle("GET /api/operations/retention-policies", s.protect("streams:read", s.retentionPolicies))
+	s.mux.Handle("PUT /api/operations/retention-policies", s.protect("streams:write", s.putRetentionPolicy))
+	s.mux.Handle("DELETE /api/operations/retention-policies", s.protect("streams:write", s.deleteRetentionPolicy))
+	s.mux.Handle("GET /api/telemetry/lifecycle/metrics", s.protect("streams:read", s.lifecycleMetrics))
+	s.mux.Handle("GET /api/telemetry/lifecycle/requests", s.protect("streams:read", s.lifecycleRequests))
+	s.mux.Handle("GET /api/telemetry/traces", s.protect("streams:read", s.traces))
+	s.mux.Handle("GET /api/telemetry/traces/{traceId}", s.protect("streams:read", s.traceByID))
+	s.mux.HandleFunc("POST /api/telemetry/lifecycle", s.ingestLifecycleEvents)
+	s.mux.Handle("GET /api/analysis/schema", s.protect("streams:read", s.streamSchemaAnalysis))
+	s.mux.Handle("GET /api/dashboards", s.protect("streams:read", s.dashboards))
+	s.mux.Handle("POST /api/dashboards", s.protect("streams:read", s.dashboards))
+	s.mux.Handle("PUT /api/dashboards/{id}", s.protect("streams:read", s.dashboardByID))
+	s.mux.Handle("DELETE /api/dashboards/{id}", s.protect("streams:read", s.dashboardByID))
 	s.mux.Handle("GET /api/streams", s.protect("streams:read", s.streams))
 	s.mux.Handle("GET /api/monitored-streams/status", s.protect("streams:read", s.monitoredStreamStatus))
 	s.mux.Handle("POST /api/monitored-streams", s.protect("streams:write", s.addMonitoredStream))
@@ -118,6 +140,45 @@ func (s *apiServer) routes() {
 	s.mux.Handle("GET /api/pending", s.protect("groups:read", s.pending))
 	s.mux.Handle("GET /api/tail", s.protect("streams:read", s.tail))
 	s.mux.Handle("POST /api/actions", s.protect("streams:read", s.action))
+	s.mux.Handle("POST /api/recovery/plans", s.protect("groups:read", s.recoveryPlan))
+	s.mux.Handle("POST /api/recovery/executions", s.protect("groups:read", s.executeRecovery))
+	s.mux.Handle("POST /api/quarantine/plans", s.protect("streams:read", s.quarantinePlan))
+	s.mux.Handle("POST /api/quarantine/executions", s.protect("streams:read", s.quarantineEntries))
+	s.mux.Handle("GET /api/quarantine/records", s.protect("streams:read", s.quarantineRecords))
+	s.mux.Handle("POST /api/quarantine/actions/plans", s.protect("streams:read", s.quarantineActionPlan))
+	s.mux.Handle("POST /api/quarantine/actions", s.protect("streams:read", s.executeQuarantineAction))
+
+	s.mux.Handle("GET /api/alert-metrics", s.protect("alerts:read", s.alertMetrics))
+	s.mux.Handle("GET /api/alert-rules", s.protect("alerts:read", s.alertRules))
+	s.mux.Handle("POST /api/alert-rules", s.protect("alerts:write", s.alertRules))
+	s.mux.Handle("GET /api/alert-rules/{id}", s.protect("alerts:read", s.alertRuleByID))
+	s.mux.Handle("PUT /api/alert-rules/{id}", s.protect("alerts:write", s.alertRuleByID))
+	s.mux.Handle("PATCH /api/alert-rules/{id}", s.protect("alerts:write", s.alertRuleByID))
+	s.mux.Handle("DELETE /api/alert-rules/{id}", s.protect("alerts:write", s.alertRuleByID))
+	s.mux.Handle("GET /api/alert-incidents", s.protect("alerts:read", s.alertIncidents))
+	s.mux.Handle("POST /api/alert-incidents/{id}/ack", s.protect("alerts:write", s.acknowledgeAlertIncident))
+	s.mux.Handle("POST /api/alert-webhooks/test", s.protect("alerts:write", s.testAlertWebhook))
+	s.mux.Handle("GET /api/alert-webhook-deliveries", s.protect("alerts:read", s.alertWebhookDeliveries))
+	s.mux.Handle("GET /api/alert-silences", s.protect("alerts:read", s.alertSilences))
+	s.mux.Handle("POST /api/alert-silences", s.protect("alerts:write", s.alertSilences))
+	s.mux.Handle("GET /api/alert-silences/{id}", s.protect("alerts:read", s.alertSilenceByID))
+	s.mux.Handle("PUT /api/alert-silences/{id}", s.protect("alerts:write", s.alertSilenceByID))
+	s.mux.Handle("DELETE /api/alert-silences/{id}", s.protect("alerts:write", s.alertSilenceByID))
+	s.mux.Handle("GET /api/alert-maintenance-windows", s.protect("alerts:read", s.alertMaintenanceWindows))
+	s.mux.Handle("POST /api/alert-maintenance-windows", s.protect("alerts:write", s.alertMaintenanceWindows))
+	s.mux.Handle("GET /api/alert-maintenance-windows/{id}", s.protect("alerts:read", s.alertMaintenanceWindowByID))
+	s.mux.Handle("PUT /api/alert-maintenance-windows/{id}", s.protect("alerts:write", s.alertMaintenanceWindowByID))
+	s.mux.Handle("DELETE /api/alert-maintenance-windows/{id}", s.protect("alerts:write", s.alertMaintenanceWindowByID))
+	s.mux.Handle("GET /api/alert-webhook-routes", s.protect("alerts:read", s.alertWebhookRoutes))
+	s.mux.Handle("POST /api/alert-webhook-routes", s.protect("alerts:write", s.alertWebhookRoutes))
+	s.mux.Handle("GET /api/alert-webhook-routes/{id}", s.protect("alerts:read", s.alertWebhookRouteByID))
+	s.mux.Handle("PUT /api/alert-webhook-routes/{id}", s.protect("alerts:write", s.alertWebhookRouteByID))
+	s.mux.Handle("DELETE /api/alert-webhook-routes/{id}", s.protect("alerts:write", s.alertWebhookRouteByID))
+	s.mux.Handle("GET /api/alert-escalation-policies", s.protect("alerts:read", s.alertEscalationPolicies))
+	s.mux.Handle("POST /api/alert-escalation-policies", s.protect("alerts:write", s.alertEscalationPolicies))
+	s.mux.Handle("GET /api/alert-escalation-policies/{id}", s.protect("alerts:read", s.alertEscalationPolicyByID))
+	s.mux.Handle("PUT /api/alert-escalation-policies/{id}", s.protect("alerts:write", s.alertEscalationPolicyByID))
+	s.mux.Handle("DELETE /api/alert-escalation-policies/{id}", s.protect("alerts:write", s.alertEscalationPolicyByID))
 
 	s.mux.Handle("GET /api/users", s.protect("users:read", s.users))
 	s.mux.Handle("POST /api/users", s.protect("users:write", s.createUser))
@@ -128,6 +189,10 @@ func (s *apiServer) routes() {
 	s.mux.Handle("PUT /api/grants", s.protect("roles:write", s.upsertGrant))
 	s.mux.Handle("PATCH /api/grants/{id}", s.protect("roles:write", s.updateGrant))
 	s.mux.Handle("DELETE /api/grants/{id}", s.protect("roles:write", s.deleteGrant))
+	s.mux.Handle("GET /api/telemetry/tokens", s.protect("settings:read", s.telemetryTokens))
+	s.mux.Handle("POST /api/telemetry/tokens", s.protect("settings:write", s.createTelemetryToken))
+	s.mux.Handle("PATCH /api/telemetry/tokens/{id}", s.protect("settings:write", s.updateTelemetryToken))
+	s.mux.Handle("DELETE /api/telemetry/tokens/{id}", s.protect("settings:write", s.deleteTelemetryToken))
 }
 
 func (s *apiServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -135,7 +200,7 @@ func (s *apiServer) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	writer.Header().Set("X-Frame-Options", "DENY")
 	writer.Header().Set("Referrer-Policy", "no-referrer")
 	writer.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-	if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/health/") {
+	if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/health/") || request.URL.Path == "/metrics" {
 		s.mux.ServeHTTP(writer, request)
 		return
 	}
@@ -151,28 +216,45 @@ func (s *apiServer) protect(action string, next http.HandlerFunc) http.Handler {
 		session, err := s.auth.session(request)
 		if err != nil {
 			writeError(recorder, http.StatusUnauthorized, "authentication_required", "로그인이 필요합니다.")
+			s.writeRequestAccessLog(accessLog{
+				Method: request.Method, Path: request.URL.Path, Action: action, Scope: requestScope(request),
+				Status: recorder.status, Duration: time.Since(start), IP: requestIP(request),
+				UserAgent: request.UserAgent(), RequestID: requestID,
+			})
 			return
 		}
 		scope := requestScope(request)
 		if session.PasswordChangeRequired && request.URL.Path != "/api/me/password" {
 			writeError(recorder, http.StatusForbidden, "password_change_required", "계속하려면 초기 비밀번호를 변경해야 합니다.")
-			go s.store.writeAccessLog(context.Background(), makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
+			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
-		if !s.store.allowed(request.Context(), session, action, scope) {
+		checker, err := s.store.permissionChecker(request.Context(), session, action)
+		if err != nil {
+			writePermissionCheckError(recorder)
+			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
+			return
+		}
+		if !checker.allows(action, scope) {
 			writeError(recorder, http.StatusForbidden, "permission_denied", "이 작업을 수행할 권한이 없습니다.")
-			go s.store.writeAccessLog(context.Background(), makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
+			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
 		if request.Method != http.MethodGet && !validOrigin(request) {
 			writeError(recorder, http.StatusForbidden, "invalid_origin", "요청 출처를 확인할 수 없습니다.")
-			go s.store.writeAccessLog(context.Background(), makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
+			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
 		request = request.WithContext(context.WithValue(request.Context(), sessionContextKey, session))
 		next(recorder, request)
-		go s.store.writeAccessLog(context.Background(), makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
+		s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 	})
+}
+
+func (s *apiServer) writeRequestAccessLog(item accessLog) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.store.writeAccessLog(ctx, item)
 }
 
 func (s *apiServer) healthLive(writer http.ResponseWriter, _ *http.Request) {
@@ -313,8 +395,9 @@ func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 		UserAgent: request.UserAgent(), RequestID: newRequestID(),
 	})
 	writeJSON(writer, http.StatusCreated, map[string]any{
-		"authenticated": true, "username": user.Username, "displayName": user.DisplayName,
-		"role": user.Role, "expiresAt": expires, "passwordChangeRequired": false,
+		"authenticated": true, "userId": user.ID, "username": user.Username, "displayName": user.DisplayName,
+		"role": user.Role, "permissions": s.store.effectivePermissionActions(request.Context(), sessionRecord{UserID: user.ID, Role: user.Role}),
+		"expiresAt": expires, "passwordChangeRequired": false,
 	})
 }
 
@@ -325,8 +408,9 @@ func (s *apiServer) session(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"authenticated": true, "username": record.Username, "displayName": record.DisplayName,
-		"role": record.Role, "expiresAt": record.ExpiresAt, "passwordChangeRequired": record.PasswordChangeRequired,
+		"authenticated": true, "userId": record.UserID, "username": record.Username, "displayName": record.DisplayName,
+		"role": record.Role, "permissions": s.store.effectivePermissionActions(request.Context(), record),
+		"expiresAt": record.ExpiresAt, "passwordChangeRequired": record.PasswordChangeRequired,
 	})
 }
 
@@ -353,8 +437,9 @@ func (s *apiServer) login(writer http.ResponseWriter, request *http.Request) {
 	s.auth.setCookie(writer, token, expires)
 	s.store.writeAccessLog(request.Context(), accessLog{UserID: user.ID, Username: user.Username, Method: request.Method, Path: request.URL.Path, Action: "auth:login", Scope: "app", Status: http.StatusOK, IP: requestIP(request), UserAgent: request.UserAgent(), RequestID: newRequestID()})
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"authenticated": true, "username": user.Username, "displayName": user.DisplayName,
-		"role": user.Role, "expiresAt": expires, "passwordChangeRequired": user.PasswordChangeRequired,
+		"authenticated": true, "userId": user.ID, "username": user.Username, "displayName": user.DisplayName,
+		"role": user.Role, "permissions": s.store.effectivePermissionActions(request.Context(), sessionRecord{UserID: user.ID, Role: user.Role}),
+		"expiresAt": expires, "passwordChangeRequired": user.PasswordChangeRequired,
 	})
 }
 
@@ -577,6 +662,11 @@ func (s *apiServer) overview(writer http.ResponseWriter, request *http.Request) 
 		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
 		return
 	}
+	checker, err := s.streamPermissionChecker(request, "streams:read")
+	if err != nil {
+		writePermissionCheckError(writer)
+		return
+	}
 	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
 	if err := connection.client.Ping(ctx).Err(); err != nil {
@@ -593,8 +683,14 @@ func (s *apiServer) overview(writer http.ResponseWriter, request *http.Request) 
 		writeRedisError(writer, err)
 		return
 	}
+	visible := make([]overviewStream, 0, len(items))
+	for _, item := range items {
+		if checker.allows("streams:read", redisStreamScope(connection.config.ID, item.Key)) {
+			visible = append(visible, item)
+		}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"connectionId": connection.config.ID, "healthy": true, "items": items,
+		"connectionId": connection.config.ID, "healthy": true, "items": visible,
 		"generatedAt": time.Now().UTC(),
 	})
 }
@@ -805,6 +901,11 @@ func (s *apiServer) streams(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
 		return
 	}
+	checker, err := s.streamPermissionChecker(request, "streams:read")
+	if err != nil {
+		writePermissionCheckError(writer)
+		return
+	}
 	pattern := request.URL.Query().Get("pattern")
 	if pattern == "" {
 		pattern = connection.config.KeyPattern
@@ -841,6 +942,13 @@ func (s *apiServer) streams(writer http.ResponseWriter, request *http.Request) {
 			}
 		}
 	}
+	visibleKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if checker.allows("streams:read", redisStreamScope(connection.config.ID, key)) {
+			visibleKeys = append(visibleKeys, key)
+		}
+	}
+	keys = visibleKeys
 	items := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
 		_, isMonitored := monitoredKeys[key]
@@ -1167,10 +1275,7 @@ func (s *apiServer) action(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
 		return
 	}
-	requiredPermission := "streams:write"
-	if input.Action == "xack" || strings.HasPrefix(input.Action, "xgroup-") {
-		requiredPermission = "groups:manage"
-	}
+	requiredPermission := actionPermission(input.Action)
 	session, _ := request.Context().Value(sessionContextKey).(sessionRecord)
 	exactScope := "stream:" + connection.config.ID + ":" + input.Key
 	if !s.store.allowed(request.Context(), session, requiredPermission, exactScope) {
@@ -1245,6 +1350,18 @@ func (s *apiServer) action(writer http.ResponseWriter, request *http.Request) {
 	}
 	s.store.writeAccessLog(request.Context(), makeAccessLog(request, session, input.Action, exactScope, http.StatusOK, 0, newRequestID()))
 	writeJSON(writer, http.StatusOK, map[string]any{"ok": true, "result": result})
+}
+
+func actionPermission(action string) string {
+	switch action {
+	case "xack", "xclaim", "xautoclaim":
+		return "groups:manage"
+	default:
+		if strings.HasPrefix(action, "xgroup-") {
+			return "groups:manage"
+		}
+		return "streams:write"
+	}
 }
 
 func newXAddArgs(stream, id string, fields map[string]string, maxLen int64, exact bool) *redis.XAddArgs {
@@ -1331,19 +1448,42 @@ func (s *apiServer) updateUser(writer http.ResponseWriter, request *http.Request
 }
 
 func (s *apiServer) accessLogs(writer http.ResponseWriter, request *http.Request) {
-	limit := int(int64Query(request.URL.Query(), "limit", 100, 1, 500))
-	items, err := s.store.listAccessLogs(request.Context(), limit)
+	limit := int(int64Query(request.URL.Query(), "limit", 100, 1, 200))
+	cursor := int64Query(request.URL.Query(), "cursor", 0, 0, 1<<62)
+	result := strings.TrimSpace(request.URL.Query().Get("result"))
+	if result != "" && result != "all" && result != "allowed" && result != "denied" {
+		writeError(writer, http.StatusBadRequest, "invalid_result", "result must be all, allowed or denied")
+		return
+	}
+	page, err := s.store.listAccessLogPage(request.Context(), accessLogQuery{
+		Limit:  limit,
+		Cursor: cursor,
+		Search: request.URL.Query().Get("search"),
+		Result: result,
+	})
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "database_error", "접근 로그를 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"items": items})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"items":      page.Items,
+		"nextCursor": nullableCursor(page.NextCursor),
+		"hasMore":    page.HasMore,
+		"summary":    map[string]any{"total": page.Total, "allowed": page.Allowed, "denied": page.Denied},
+	})
+}
+
+func nullableCursor(cursor int64) any {
+	if cursor <= 0 {
+		return nil
+	}
+	return cursor
 }
 
 func (s *apiServer) roles(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{"items": []map[string]any{
-		{"id": "viewer", "name": "Viewer", "permissions": []string{"connections:read", "streams:read", "groups:read"}},
-		{"id": "operator", "name": "Operator", "permissions": []string{"connections:read", "streams:read", "streams:write", "groups:read", "groups:manage"}},
+		{"id": "viewer", "name": "Viewer", "permissions": []string{"connections:read", "streams:read", "groups:read", "alerts:read"}},
+		{"id": "operator", "name": "Operator", "permissions": []string{"connections:read", "streams:read", "streams:write", "groups:read", "groups:manage", "alerts:read"}},
 		{"id": "admin", "name": "Admin", "permissions": []string{"*"}},
 	}})
 }

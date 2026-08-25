@@ -10,6 +10,7 @@ import { OverviewView } from "./views/OverviewView";
 import { StreamsView } from "./views/StreamsView";
 import { ConnectionsView, SettingsView } from "./views/SystemViews";
 import { AccessControlView } from "./views/AccessControlView";
+import { AlertsView } from "./views/AlertsView";
 import { useI18n } from "./i18n";
 import { readMigratedStorage } from "./storage";
 
@@ -22,8 +23,10 @@ export function App() {
   const [configPath, setConfigPath] = useState("/data/config.properties");
   const [initialConnection, setInitialConnection] = useState<RedisConnectionConfig | undefined>();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [userId, setUserId] = useState("");
   const [username, setUsername] = useState("admin");
   const [role, setRole] = useState<"viewer" | "operator" | "admin">("admin");
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -31,6 +34,7 @@ export function App() {
   const [selectedStreamKey, setSelectedStreamKey] = useState("");
   const [selectedStreamConnectionId, setSelectedStreamConnectionId] = useState("");
   const [streamFocus, setStreamFocus] = useState<"groups" | null>(null);
+  const [streamFocusGroup, setStreamFocusGroup] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
@@ -49,14 +53,18 @@ export function App() {
         const session = await api.session();
         if (!active) return;
         setAuthenticated(session.authenticated);
+        setUserId(session.userId ?? "");
         if (session.username) setUsername(session.username);
         if (session.role) setRole(session.role);
+        setPermissions(session.permissions ?? permissionsForRole(session.role));
         setPasswordChangeRequired(Boolean(session.passwordChangeRequired));
       })
       .catch(() => {
         if (!active) return;
         setSetupRequired(false);
-        setAuthenticated(import.meta.env.DEV && readMigratedStorage(sessionStorage, DEV_SESSION_KEY, LEGACY_DEV_SESSION_KEY) === "true");
+        const developmentSession = import.meta.env.DEV && readMigratedStorage(sessionStorage, DEV_SESSION_KEY, LEGACY_DEV_SESSION_KEY) === "true";
+        setAuthenticated(developmentSession);
+        if (developmentSession) setPermissions(["*"]);
       });
     return () => { active = false; };
   }, []);
@@ -72,14 +80,17 @@ export function App() {
     setLoginError("");
     try {
       const session = await api.login(nextUsername, password);
+      setUserId(session.userId ?? "");
       setUsername(session.username ?? nextUsername);
       setRole(session.role ?? "admin");
+      setPermissions(session.permissions ?? permissionsForRole(session.role));
       setPasswordChangeRequired(Boolean(session.passwordChangeRequired));
       setAuthenticated(true);
     } catch (error) {
       if (import.meta.env.DEV && nextUsername && password) {
         sessionStorage.setItem(DEV_SESSION_KEY, "true");
         setUsername(nextUsername);
+        setPermissions(["*"]);
         setAuthenticated(true);
       } else {
         setLoginError(error instanceof Error ? t(error.message) : t("Sign-in failed."));
@@ -93,14 +104,18 @@ export function App() {
     await api.logout().catch(() => undefined);
     sessionStorage.removeItem(DEV_SESSION_KEY);
     sessionStorage.removeItem(LEGACY_DEV_SESSION_KEY);
+    setPermissions([]);
+    setUserId("");
     setAuthenticated(false);
   };
 
   const setupComplete = (session: Awaited<ReturnType<typeof api.setup>>) => {
     setSetupRequired(false);
     setAuthenticated(true);
+    setUserId(session.userId ?? "");
     if (session.username) setUsername(session.username);
     if (session.role) setRole(session.role);
+    setPermissions(session.permissions ?? permissionsForRole(session.role));
     setPasswordChangeRequired(false);
   };
 
@@ -129,30 +144,51 @@ export function App() {
         page={page}
         username={username}
         role={role}
+        permissions={permissions}
         mobileNav={mobileNav}
+        selectedStreamConnectionId={selectedStreamConnectionId}
         selectedStreamKey={selectedStreamKey}
         onNavigate={(nextPage) => {
-          if (nextPage !== "streams") setStreamFocus(null);
+          if (nextPage !== "streams") {
+            setStreamFocus(null);
+            setStreamFocusGroup("");
+          }
           setPage(nextPage);
         }}
-        onSelectStream={(key) => {
-          setSelectedStreamConnectionId("");
+        onSelectStream={(target) => {
+          setSelectedStreamConnectionId(target.connectionId);
           setStreamFocus(null);
-          setSelectedStreamKey(key);
+          setStreamFocusGroup("");
+          setSelectedStreamKey(target.key);
         }}
         onToggleNav={() => setMobileNav((value) => !value)}
         onLogout={logout}
       >
-        {page === "overview" ? <OverviewView onOpenGroups={(target) => {
+        {page === "overview" ? <OverviewView currentUserId={userId} role={role} canWrite={hasPermission(permissions, "streams:write")} onToast={setToast} onOpenGroups={(target) => {
           setSelectedStreamConnectionId(target.connectionId);
           setSelectedStreamKey(target.key);
           setStreamFocus("groups");
+          setStreamFocusGroup(target.groupName ?? "");
           setPage("streams");
         }} /> : null}
-        {page === "streams" ? <StreamsView selectedConnectionId={selectedStreamConnectionId} selectedStreamKey={selectedStreamKey} focusSection={streamFocus} onSelectedStreamChange={setSelectedStreamKey} onToast={setToast} /> : null}
-        {page === "connections" ? <ConnectionsView role={role} onToast={setToast} /> : null}
+        {page === "streams" ? <StreamsView
+          key={selectedStreamConnectionId || "default"}
+          selectedConnectionId={selectedStreamConnectionId}
+          selectedStreamKey={selectedStreamKey}
+          focusSection={streamFocus}
+          focusGroup={streamFocusGroup}
+          canWrite={hasPermission(permissions, "streams:write")}
+          canManageGroups={hasPermission(permissions, "groups:manage")}
+          onSelectedStreamChange={(target) => {
+            setSelectedStreamConnectionId(target.connectionId);
+            setSelectedStreamKey(target.key);
+          }}
+          onToast={setToast}
+        /> : null}
+        {page === "alerts" ? <AlertsView canWrite={hasPermission(permissions, "alerts:write")} onToast={setToast} /> : null}
+        {page === "connections" ? <ConnectionsView canReadSettings={hasPermission(permissions, "settings:read")} canWriteSettings={hasPermission(permissions, "settings:write")} onToast={setToast} /> : null}
         {page === "access" && role === "admin" ? <AccessControlView onToast={setToast} /> : null}
-        {page === "settings" ? <SettingsView username={username} role={role} onUsernameChanged={setUsername} onToast={setToast} /> : null}
+        {page === "settings" ? <SettingsView username={username} canReadSettings={hasPermission(permissions, "settings:read")} canWriteSettings={hasPermission(permissions, "settings:write")} onUsernameChanged={setUsername} onToast={setToast} /> : null}
       </AppShell>
       {toast ? (
         <div className={`toast toast--${toast.kind}`} role="status">
@@ -165,4 +201,14 @@ export function App() {
       ) : null}
     </>
   );
+}
+
+function hasPermission(permissions: string[], action: string) {
+  return permissions.includes("*") || permissions.includes(action);
+}
+
+function permissionsForRole(role: "viewer" | "operator" | "admin" | undefined) {
+  if (role === "admin") return ["*"];
+  const shared = ["profile:write", "connections:read", "streams:read", "groups:read", "alerts:read"];
+  return role === "operator" ? [...shared, "streams:write", "groups:manage"] : shared;
 }

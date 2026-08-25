@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -81,7 +82,7 @@ type consumerGroupMetricValue struct {
 	ConsumerCount  float64  `json:"consumerCount"`
 	Pending        float64  `json:"pending"`
 	Lag            *float64 `json:"lag"`
-	ConsumeDelayMs *float64 `json:"consumeDelayMs"`
+	ConsumeDelayMs *float64 `json:"observedDeliveryAgeMs"`
 	ConsumeRate    *float64 `json:"consumeRate"`
 	LagDelta       *float64 `json:"lagDelta"`
 }
@@ -91,6 +92,20 @@ type consumerGroupMetricPoint struct {
 	Values    map[string]consumerGroupMetricValue `json:"values"`
 }
 
+type consumerGroupMetricSnapshot struct {
+	StreamKey       string     `json:"streamKey"`
+	GroupName       string     `json:"groupName"`
+	ConsumerCount   int64      `json:"consumerCount"`
+	Pending         int64      `json:"pending"`
+	Lag             *int64     `json:"lag"`
+	ConsumeDelayMs  *int64     `json:"observedDeliveryAgeMs"`
+	ConsumeRate     *float64   `json:"consumeRate"`
+	LagDelta        *float64   `json:"lagDelta"`
+	LastDeliveredID string     `json:"lastDeliveredId"`
+	SampledAt       time.Time  `json:"sampledAt"`
+	LastActivityAt  *time.Time `json:"lastActivityAt"`
+}
+
 type streamMetricPoint struct {
 	Timestamp      time.Time `json:"timestamp"`
 	Entries        float64   `json:"entries"`
@@ -98,7 +113,7 @@ type streamMetricPoint struct {
 	ConsumerCount  float64   `json:"consumerCount"`
 	TotalLag       *float64  `json:"totalLag"`
 	Pending        float64   `json:"pending"`
-	ConsumeDelayMs *float64  `json:"consumeDelayMs"`
+	ConsumeDelayMs *float64  `json:"observedDeliveryAgeMs"`
 	RedisLatencyMs float64   `json:"redisLatencyMs"`
 	PublishRate    *float64  `json:"publishRate"`
 	ConsumeRate    *float64  `json:"consumeRate"`
@@ -303,6 +318,98 @@ func (s *store) latestConsumerGroupMetricStates(ctx context.Context, connectionI
 	return states, rows.Err()
 }
 
+func (s *store) listLatestConsumerGroupMetricSnapshots(
+	ctx context.Context,
+	connectionID string,
+	freshAfter time.Time,
+) ([]consumerGroupMetricSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH latest AS (
+			SELECT stream_key, group_name, MAX(id) AS id
+			FROM consumer_group_metric_samples
+			WHERE connection_id=? AND recorded_at>=?
+			GROUP BY stream_key, group_name
+		),
+		activity AS (
+			SELECT stream_key, group_name, MAX(recorded_at) AS last_activity_at
+			FROM (
+				SELECT stream_key, group_name, recorded_at
+				FROM consumer_group_metric_samples
+				WHERE connection_id=? AND consume_rate>0
+				UNION ALL
+				SELECT stream_key, group_name, recorded_at
+				FROM consumer_group_metric_rollups
+				WHERE connection_id=? AND consume_rate>0
+			)
+			GROUP BY stream_key, group_name
+		)
+		SELECT samples.stream_key, samples.group_name, samples.consumer_count,
+			samples.pending,
+			CASE WHEN samples.lag_known=0 THEN NULL ELSE samples.lag END,
+			samples.consume_delay_ms, samples.consume_rate, samples.lag_delta,
+			samples.last_delivered_id, samples.recorded_at, activity.last_activity_at
+		FROM consumer_group_metric_samples AS samples
+		JOIN latest ON latest.id=samples.id
+		LEFT JOIN activity
+			ON activity.stream_key=samples.stream_key
+			AND activity.group_name=samples.group_name
+		ORDER BY samples.stream_key, samples.group_name
+	`,
+		connectionID,
+		freshAfter.UTC().Format(time.RFC3339Nano),
+		connectionID,
+		connectionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]consumerGroupMetricSnapshot, 0)
+	for rows.Next() {
+		var item consumerGroupMetricSnapshot
+		var lag, consumeDelay sql.NullInt64
+		var consumeRate, lagDelta sql.NullFloat64
+		var sampledAt string
+		var lastActivityAt sql.NullString
+		if err := rows.Scan(
+			&item.StreamKey,
+			&item.GroupName,
+			&item.ConsumerCount,
+			&item.Pending,
+			&lag,
+			&consumeDelay,
+			&consumeRate,
+			&lagDelta,
+			&item.LastDeliveredID,
+			&sampledAt,
+			&lastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, sampledAt); err == nil {
+			item.SampledAt = parsed
+		}
+		if lag.Valid {
+			value := lag.Int64
+			item.Lag = &value
+		}
+		if consumeDelay.Valid {
+			value := consumeDelay.Int64
+			item.ConsumeDelayMs = &value
+		}
+		item.ConsumeRate = nullFloatPointer(consumeRate)
+		item.LagDelta = nullFloatPointer(lagDelta)
+		if lastActivityAt.Valid {
+			if parsed, err := time.Parse(time.RFC3339Nano, lastActivityAt.String); err == nil {
+				item.LastActivityAt = &parsed
+			}
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func consumerGroupMetricStateKey(streamKey, groupName string) string {
 	return streamKey + "\x00" + groupName
 }
@@ -391,8 +498,10 @@ func (s *store) maintainMetricSamples(ctx context.Context, now time.Time) error 
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM stream_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM consumer_group_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano))
-	return err
+	if _, err = s.db.ExecContext(ctx, `DELETE FROM consumer_group_metric_rollups WHERE recorded_at<?`, now.Add(-metricRetention).UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return s.maintainOperationalHistory(ctx, now)
 }
 
 func (s *store) listMetricSeries(
@@ -651,6 +760,7 @@ func (s *apiServer) startMetricCollection(ctx context.Context) <-chan struct{} {
 }
 
 func (s *apiServer) collectMetricSnapshots(parent context.Context) {
+	monitor := s.operationalMonitor()
 	for _, connectionID := range s.redis.ids() {
 		if parent.Err() != nil {
 			return
@@ -659,42 +769,60 @@ func (s *apiServer) collectMetricSnapshots(parent context.Context) {
 		if err != nil {
 			continue
 		}
+		attempt := monitor.BeginCollectorAttempt(connectionID, 0)
 		ctx, cancel := context.WithTimeout(parent, 900*time.Millisecond)
+		monitored, err := s.store.listMonitoredStreams(ctx, connectionID)
+		if err != nil {
+			attempt.Finish(0, 0, fmt.Errorf("load monitored streams: %w", err))
+			cancel()
+			continue
+		}
+		attempt.SetMonitored(len(monitored))
 		startedAt := time.Now()
 		if err := connection.client.Ping(ctx).Err(); err != nil {
+			attempt.Finish(0, len(monitored), fmt.Errorf("Redis PING: %w", err))
 			cancel()
 			continue
 		}
 		latencyMs := float64(time.Since(startedAt).Microseconds()) / 1000
-		monitored, err := s.store.listMonitoredStreams(ctx, connectionID)
-		if err != nil {
-			cancel()
-			continue
-		}
 		states, err := s.store.latestMetricStates(ctx, connectionID)
 		if err != nil {
+			attempt.Finish(0, len(monitored), fmt.Errorf("load stream metric state: %w", err))
 			cancel()
 			continue
 		}
 		groupStates, err := s.store.latestConsumerGroupMetricStates(ctx, connectionID)
 		if err != nil {
+			attempt.Finish(0, len(monitored), fmt.Errorf("load consumer-group metric state: %w", err))
 			cancel()
 			continue
 		}
 		recordedAt := time.Now().UTC()
 		samples, groupSamples := collectConnectionMetricSamples(ctx, connection, monitored, states, groupStates, recordedAt, latencyMs)
+		succeededStreams := len(samples)
+		failedStreams := len(monitored) - succeededStreams
 		if len(samples) == 0 {
 			samples = append(samples, streamMetricSample{
 				RecordedAt: recordedAt, ConnectionID: connectionID, StreamKey: "",
 				LagKnown: true, RedisLatencyMs: latencyMs,
 			})
 		}
-		if err := s.store.writeMetricSamples(ctx, samples); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf(`{"level":"warn","message":"Unable to store stream metrics","connection":%q,"error":%q}`, connectionID, err)
+		var collectionErr error
+		if err := s.store.writeMetricSamples(ctx, samples); err != nil {
+			collectionErr = fmt.Errorf("store stream metrics: %w", err)
 		}
-		if err := s.store.writeConsumerGroupMetricSamples(ctx, groupSamples); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf(`{"level":"warn","message":"Unable to store consumer group metrics","connection":%q,"error":%q}`, connectionID, err)
+		if collectionErr != nil && !errors.Is(collectionErr, context.Canceled) {
+			log.Printf(`{"level":"warn","message":"Unable to store stream metrics","connection":%q,"error":%q}`, connectionID, collectionErr)
 		}
+		if err := s.store.writeConsumerGroupMetricSamples(ctx, groupSamples); err != nil {
+			if collectionErr == nil {
+				collectionErr = fmt.Errorf("store consumer-group metrics: %w", err)
+			}
+			if !errors.Is(err, context.Canceled) {
+				log.Printf(`{"level":"warn","message":"Unable to store consumer group metrics","connection":%q,"error":%q}`, connectionID, err)
+			}
+		}
+		attempt.Finish(succeededStreams, failedStreams, collectionErr)
 		cancel()
 	}
 }
@@ -972,5 +1100,39 @@ func (s *apiServer) consumerGroupMetricSeries(writer http.ResponseWriter, reques
 		"generatedAt":     until,
 		"groups":          groups,
 		"items":           items,
+	})
+}
+
+func (s *apiServer) latestConsumerGroupMetrics(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	checker, err := s.streamPermissionChecker(request, "groups:read")
+	if err != nil {
+		writePermissionCheckError(writer)
+		return
+	}
+	generatedAt := time.Now().UTC()
+	items, err := s.store.listLatestConsumerGroupMetricSnapshots(
+		request.Context(),
+		connection.config.ID,
+		generatedAt.Add(-15*metricCollectionInterval),
+	)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "metrics_failed", "unable to load latest consumer group metrics")
+		return
+	}
+	visible := make([]consumerGroupMetricSnapshot, 0, len(items))
+	for _, item := range items {
+		if checker.allows("groups:read", redisStreamScope(connection.config.ID, item.StreamKey)) {
+			visible = append(visible, item)
+		}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"connectionId": connection.config.ID,
+		"generatedAt":  generatedAt,
+		"items":        visible,
 	})
 }

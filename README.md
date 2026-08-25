@@ -32,6 +32,13 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 - Browse Streams, messages, payloads, and consumer groups in one workspace.
 - Monitor lag, pending entries, consumption delay, Redis latency, publish rate, consume rate, and lag change.
 - Store one-second metrics for the recent window and seven-day minute rollups.
+- Recover consumer groups with previewed `XACK`, `XCLAIM`, `XAUTOCLAIM`, and `XGROUP SETID` operations.
+- Quarantine entries to a DLQ and replay them without deleting the source message.
+- Review consumer join, leave, stalled, and recovered history alongside topology and failover events.
+- Forecast stream and Redis memory growth, then compare it with user-defined retention expectations.
+- Detect payload schema drift and follow instrumented requests across multiple streams.
+- Save multi-stream dashboards for repeatable operational views.
+- Route alerts to multiple webhooks with silences, maintenance windows, and escalation policies.
 - Follow new entries with Live tail and cursor-based pagination.
 - Add messages with optional `MAXLEN`.
 - Manage standalone, Sentinel, and Cluster connections with ACL, passwords, TLS, or mTLS.

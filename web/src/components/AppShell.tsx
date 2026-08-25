@@ -1,6 +1,7 @@
 import {
   Activity,
   ArrowRight,
+  BellRing,
   ChevronDown,
   CircleUserRound,
   Command,
@@ -30,18 +31,26 @@ type AppShellProps = {
   page: Page;
   username: string;
   role: "viewer" | "operator" | "admin";
+  permissions: string[];
   mobileNav: boolean;
+  selectedStreamConnectionId: string;
   selectedStreamKey: string;
   onNavigate: (page: Page) => void;
-  onSelectStream: (key: string) => void;
+  onSelectStream: (target: { connectionId: string; key: string }) => void;
   onToggleNav: () => void;
   onLogout: () => void;
   children: React.ReactNode;
 };
 
+type NavigationStream = StreamItem & {
+  connectionId: string;
+  connectionName: string;
+};
+
 const navigation = [
   { id: "overview" as const, label: "Overview", icon: Gauge },
   { id: "streams" as const, label: "Streams", icon: Database },
+  { id: "alerts" as const, label: "Alerts", icon: BellRing },
   { id: "connections" as const, label: "Connections", icon: Activity },
   { id: "access" as const, label: "Access Control", icon: ShieldCheck },
   { id: "settings" as const, label: "Settings", icon: Settings },
@@ -51,7 +60,9 @@ export function AppShell({
   page,
   username,
   role,
+  permissions,
   mobileNav,
+  selectedStreamConnectionId,
   selectedStreamKey,
   onNavigate,
   onSelectStream,
@@ -60,8 +71,8 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const { locale, t } = useI18n();
-  const [connection, setConnection] = useState<RedisConnection | null>(null);
-  const [streams, setStreams] = useState<StreamItem[]>([]);
+  const [connections, setConnections] = useState<RedisConnection[]>([]);
+  const [streams, setStreams] = useState<NavigationStream[]>([]);
   const [streamFilter, setStreamFilter] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
@@ -70,31 +81,54 @@ export function AppShell({
     readMigratedStorage(window.localStorage, SIDEBAR_STORAGE_KEY, LEGACY_SIDEBAR_STORAGE_KEY) === "true",
   );
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const connectionLoadSequence = useRef(0);
   const deferredStreamFilter = useDeferredValue(streamFilter.trim().toLowerCase());
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+  const can = (action: string) => permissions.includes("*") || permissions.includes(action);
+  const canOpenAccessControl = role === "admin";
+  const canOpenPage = (id: Page) => {
+    if (id === "overview" || id === "streams") return can("streams:read");
+    if (id === "alerts") return can("alerts:read");
+    if (id === "connections") return can("connections:read");
+    if (id === "access") return canOpenAccessControl;
+    return true;
+  };
+  const connection = connections.find((item) => item.id === selectedStreamConnectionId) ?? connections[0] ?? null;
   const visibleStreams = deferredStreamFilter
-    ? streams.filter((stream) => stream.key.toLowerCase().includes(deferredStreamFilter))
+    ? streams.filter((stream) => `${stream.key} ${stream.connectionName} ${stream.connectionId}`.toLowerCase().includes(deferredStreamFilter))
     : streams;
   const visibleNavigation = navigation.filter((item) =>
-    (item.id !== "access" || role === "admin")
+    canOpenPage(item.id)
     && (!normalizedCommandQuery || `${t(item.label)} ${item.label} ${item.id}`.toLowerCase().includes(normalizedCommandQuery)),
   );
   const commandStreams = streams
-    .filter((stream) => !normalizedCommandQuery || stream.key.toLowerCase().includes(normalizedCommandQuery))
+    .filter((stream) => !normalizedCommandQuery || `${stream.key} ${stream.connectionName} ${stream.connectionId}`.toLowerCase().includes(normalizedCommandQuery))
     .slice(0, 8);
 
   useEffect(() => {
     const loadConnections = () => {
-    api.connections()
-      .then(async ({ items }) => {
-        const first = items[0] ?? null;
-        setConnection(first);
-        if (first) setStreams((await api.streams(first.id)).items);
-      })
-      .catch(() => {
-        setConnection(null);
-        setStreams([]);
-      });
+      const sequence = ++connectionLoadSequence.current;
+      api.connections()
+        .then(async ({ items }) => {
+          const streamResults = await Promise.allSettled(items.map(async (item) => ({
+            connection: item,
+            streams: (await api.streams(item.id)).items,
+          })));
+          if (sequence !== connectionLoadSequence.current) return;
+          setConnections(items);
+          setStreams(streamResults.flatMap((result) => result.status === "fulfilled"
+            ? result.value.streams.map((stream) => ({
+              ...stream,
+              connectionId: result.value.connection.id,
+              connectionName: result.value.connection.name,
+            }))
+            : []));
+        })
+        .catch(() => {
+          if (sequence !== connectionLoadSequence.current) return;
+          setConnections([]);
+          setStreams([]);
+        });
     };
     loadConnections();
     window.addEventListener("redisstreamscope:connections-changed", loadConnections);
@@ -138,8 +172,8 @@ export function AppShell({
     if (mobileNav) onToggleNav();
   };
 
-  const selectStream = (key: string) => {
-    onSelectStream(key);
+  const selectStream = (stream: NavigationStream) => {
+    onSelectStream({ connectionId: stream.connectionId, key: stream.key });
     navigate("streams");
   };
 
@@ -150,7 +184,7 @@ export function AppShell({
       return;
     }
     const firstStream = commandStreams[0];
-    if (firstStream) selectStream(firstStream.key);
+    if (firstStream) selectStream(firstStream);
   };
 
   return (
@@ -189,7 +223,7 @@ export function AppShell({
               <div className="profile-summary"><span>{username.slice(0, 2).toUpperCase()}</span><div><strong>{username}</strong><em>{role}</em></div></div>
               <LanguageSelect className="profile-language" />
               <button role="menuitem" onClick={() => navigate("settings")}><UserRoundCog size={16} /><span><strong>{t("Account settings")}</strong><em>{t("Username and password")}</em></span></button>
-              {role === "admin" ? <button role="menuitem" onClick={() => navigate("access")}><ShieldCheck size={16} /><span><strong>{t("Access control")}</strong><em>{t("Users, roles and audit logs")}</em></span></button> : null}
+              {canOpenAccessControl ? <button role="menuitem" onClick={() => navigate("access")}><ShieldCheck size={16} /><span><strong>{t("Access control")}</strong><em>{t("Users, roles and audit logs")}</em></span></button> : null}
               <button role="menuitem" className="profile-logout" onClick={() => { setProfileOpen(false); onLogout(); }}><LogOut size={16} /><span><strong>{t("Sign out")}</strong><em>{t("End this session")}</em></span></button>
             </div>
           </> : null}
@@ -202,7 +236,7 @@ export function AppShell({
           <button onClick={onToggleNav} aria-label={t("Close menu")}><X size={18} /></button>
         </div>
         <nav aria-label={t("Main navigation")}>
-          {navigation.filter((item) => item.id !== "access" || role === "admin").map(({ id, label, icon: Icon }) => (
+          {navigation.filter((item) => canOpenPage(item.id)).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               className={page === id ? "active" : ""}
@@ -216,23 +250,28 @@ export function AppShell({
             </button>
           ))}
         </nav>
-        <div className="stream-nav">
+        {page === "overview" || page === "streams" ? <div className="stream-nav">
           <div className="nav-section-title"><span>STREAMS</span></div>
           <label className="nav-filter"><Search size={13} /><input value={streamFilter} onChange={(event) => setStreamFilter(event.target.value)} placeholder={t("Filter streams…")} aria-label={t("Filter streams")} />{streamFilter ? <button type="button" onClick={() => setStreamFilter("")} aria-label={t("Clear filter")}><X size={13} /></button> : null}</label>
-          {visibleStreams.map((stream) => (
-            <button
-              key={stream.key}
-              className={page === "streams" && stream.key === selectedStreamKey ? "stream-link selected" : "stream-link"}
-              onClick={() => {
-                selectStream(stream.key);
-              }}
-            >
-              <span>{stream.key}</span>
-              <em>{stream.length.toLocaleString(locale)}</em>
-            </button>
-          ))}
+          {connections.map((item) => {
+            const connectionStreams = visibleStreams.filter((stream) => stream.connectionId === item.id);
+            if (!connectionStreams.length) return null;
+            return <div key={item.id}>
+              {connections.length > 1 ? <div className="nav-section-title"><span>{item.name}</span></div> : null}
+              {connectionStreams.map((stream) => (
+                <button
+                  key={`${stream.connectionId}:${stream.key}`}
+                  className={page === "streams" && stream.connectionId === selectedStreamConnectionId && stream.key === selectedStreamKey ? "stream-link selected" : "stream-link"}
+                  onClick={() => selectStream(stream)}
+                >
+                  <span>{stream.key}</span>
+                  <em>{stream.length.toLocaleString(locale)}</em>
+                </button>
+              ))}
+            </div>;
+          })}
           {!visibleStreams.length ? <div className="nav-empty">{streams.length ? t("No streams match this filter.") : t("No streams to display.")}</div> : null}
-        </div>
+        </div> : null}
         <div className="connection-health">
           <div><span><i className={connection?.healthy ? "health-dot" : "health-dot health-dot--down"} />{connection?.healthy ? t("Connection healthy") : t("Connection unavailable")}</span><Activity size={15} /></div>
           <p>{connection?.mode ?? "Redis"} <b>·</b> {connection ? `${connection.latencyMs.toFixed(1)} ms` : "—"}</p>
@@ -247,7 +286,7 @@ export function AppShell({
           <label className="command-input"><Search size={18} /><input ref={commandInputRef} value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") runFirstCommand(); }} placeholder={t("Search pages or streams…")} /><kbd>ESC</kbd></label>
           <div className="command-results">
             {visibleNavigation.length ? <div className="command-group"><span>{t("Navigation")}</span>{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigate(id)}><Icon size={17} /><span><strong>{t(label)}</strong><em>{t("Open page")}</em></span><ArrowRight size={15} /></button>)}</div> : null}
-            {commandStreams.length ? <div className="command-group"><span>{t("Streams")}</span>{commandStreams.map((stream) => <button key={stream.key} onClick={() => selectStream(stream.key)}><Database size={17} /><span><strong className="mono">{stream.key}</strong><em>{t("{count} entries", { count: stream.length.toLocaleString(locale) })}</em></span><ArrowRight size={15} /></button>)}</div> : null}
+            {commandStreams.length ? <div className="command-group"><span>{t("Streams")}</span>{commandStreams.map((stream) => <button key={`${stream.connectionId}:${stream.key}`} onClick={() => selectStream(stream)}><Database size={17} /><span><strong className="mono">{stream.key}</strong><em>{connections.length > 1 ? `${stream.connectionName} · ` : ""}{t("{count} entries", { count: stream.length.toLocaleString(locale) })}</em></span><ArrowRight size={15} /></button>)}</div> : null}
             {!visibleNavigation.length && !commandStreams.length ? <div className="command-empty">{t("No matching pages or streams.")}</div> : null}
           </div>
           <footer><span><kbd>↵</kbd> {t("select")}</span><span><kbd>ESC</kbd> {t("close")}</span></footer>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,57 @@ func TestMigrateLegacyDatabaseWithCompanionFiles(t *testing.T) {
 		if string(content) != "legacy"+suffix {
 			t.Fatalf("migrated file %s has unexpected content", suffix)
 		}
+	}
+}
+
+func TestEffectivePermissionActionsReflectBaseRoleScopedAllowAndGlobalDeny(t *testing.T) {
+	dataStore, err := openStore(appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dataStore.close() })
+	ctx := context.Background()
+	passwordHash, err := hashPassword("viewer-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := dataStore.createUser(ctx, "viewer-capabilities", "Viewer", passwordHash, "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataStore.upsertGrant(ctx, grantRecord{UserID: user.ID, Action: "alerts:write", Scope: "connection:*", Effect: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataStore.upsertGrant(ctx, grantRecord{UserID: user.ID, Action: "streams:read", Scope: "*", Effect: "deny"}); err != nil {
+		t.Fatal(err)
+	}
+	actions := dataStore.effectivePermissionActions(ctx, sessionRecord{UserID: user.ID, Role: "viewer"})
+	contains := func(expected string) bool {
+		for _, action := range actions {
+			if action == expected {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains("alerts:write") {
+		t.Fatalf("scoped allow missing from capabilities: %v", actions)
+	}
+	if contains("streams:read") {
+		t.Fatalf("global deny must suppress the capability: %v", actions)
+	}
+	if !contains("groups:read") || !contains("profile:write") {
+		t.Fatalf("base role capabilities missing: %v", actions)
+	}
+}
+
+func TestAccessLogPruningIsBatched(t *testing.T) {
+	if shouldPruneAccessLogs(accessLogRetention) || shouldPruneAccessLogs(accessLogRetention+1) {
+		t.Fatal("retention pruning must not run for every access-log insert")
+	}
+	nextBoundary := ((accessLogRetention / accessLogPruneInterval) + 1) * accessLogPruneInterval
+	if !shouldPruneAccessLogs(nextBoundary) || shouldPruneAccessLogs(nextBoundary+1) {
+		t.Fatalf("expected only the batch boundary %d to prune", nextBoundary)
 	}
 }
 
@@ -215,6 +267,53 @@ func TestStorePersistsMonitoredStreamsPerConnection(t *testing.T) {
 	archive, err := store.listMonitoredStreams(ctx, "archive")
 	if err != nil || len(archive) != 1 {
 		t.Fatalf("deleting primary must not affect archive: items=%+v err=%v", archive, err)
+	}
+}
+
+func TestAccessLogCursorPaginationAndServerSideFilters(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	ctx := context.Background()
+	for index, status := range []int{200, 403, 201, 500, 204} {
+		store.writeAccessLog(ctx, accessLog{
+			Username:  "operator",
+			Method:    "GET",
+			Path:      "/api/streams/" + string(rune('a'+index)),
+			Action:    "streams:read",
+			Scope:     "stream:redis:orders",
+			Status:    status,
+			IP:        "127.0.0.1",
+			RequestID: fmt.Sprintf("req-%d", index),
+		})
+	}
+
+	first, err := store.listAccessLogPage(ctx, accessLogQuery{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 2 || !first.HasMore || first.NextCursor <= 0 || first.Total != 5 || first.Allowed != 3 || first.Denied != 2 {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+	second, err := store.listAccessLogPage(ctx, accessLogQuery{Limit: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 2 || !second.HasMore {
+		t.Fatalf("unexpected second page: %+v", second)
+	}
+	if first.Items[1]["id"].(int64) <= second.Items[0]["id"].(int64) {
+		t.Fatalf("cursor pages overlap or are not descending: first=%+v second=%+v", first.Items, second.Items)
+	}
+	denied, err := store.listAccessLogPage(ctx, accessLogQuery{Limit: 10, Result: "denied", Search: "orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(denied.Items) != 2 || denied.Total != 2 || denied.Allowed != 3 || denied.Denied != 2 {
+		t.Fatalf("unexpected denied page: %+v", denied)
 	}
 }
 
