@@ -1,199 +1,323 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, CheckCircle2, RotateCcw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Archive, CheckCircle2, ChevronDown, ExternalLink, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
-import type { ConsumerGroup, QuarantineInput, QuarantinePlan, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, ToastState } from "../types";
+import type { ConsumerGroup, PendingEntry, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, ToastState } from "../types";
 
 type Props = {
   connectionId: string;
   streamKey: string;
   groups: ConsumerGroup[];
+  refreshRevision: number;
   canManageGroups: boolean;
   canWriteStreams: boolean;
   onChanged: () => Promise<void>;
+  onInspectEntry: (entryId: string) => void;
   onToast: (toast: ToastState) => void;
 };
 
-const splitIDs = (value: string) => Array.from(new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean)));
 const operationID = () => `ui-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
 
-export function RecoveryCenter({ connectionId, streamKey, groups, canManageGroups, canWriteStreams, onChanged, onToast }: Props) {
+export function RecoveryCenter({ connectionId, streamKey, groups, refreshRevision, canManageGroups, canWriteStreams, onChanged, onInspectEntry, onToast }: Props) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"recovery" | "quarantine">("recovery");
+  const [tab, setTab] = useState<"pending" | "dlq">("pending");
   return <div className="recovery-center">
     <div className="subtabs recovery-tabs">
-      <button type="button" className={tab === "recovery" ? "active" : ""} onClick={() => setTab("recovery")}><RotateCcw size={14} />{t("Recovery")}</button>
-      <button type="button" className={tab === "quarantine" ? "active" : ""} onClick={() => setTab("quarantine")}><Archive size={14} />{t("Quarantine / DLQ")}</button>
+      <button type="button" className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}><RotateCcw size={16} />{t("Pending recovery")}</button>
+      <button type="button" className={tab === "dlq" ? "active" : ""} onClick={() => setTab("dlq")}><Archive size={16} />{t("Dead letter queue")}</button>
     </div>
-    {tab === "recovery" ? <RecoveryWorkspace connectionId={connectionId} streamKey={streamKey} groups={groups} canExecute={canManageGroups} onChanged={onChanged} onToast={onToast} /> : null}
-    {tab === "quarantine" ? <QuarantineWorkspace connectionId={connectionId} streamKey={streamKey} groups={groups} canManageGroups={canManageGroups} canWriteStreams={canWriteStreams} onChanged={onChanged} onToast={onToast} /> : null}
+    {tab === "pending" ? <PendingRecoveryWorkspace connectionId={connectionId} streamKey={streamKey} groups={groups} refreshRevision={refreshRevision} canExecute={canManageGroups} onChanged={onChanged} onInspectEntry={onInspectEntry} onToast={onToast} /> : null}
+    {tab === "dlq" ? <DeadLetterWorkspace connectionId={connectionId} streamKey={streamKey} refreshRevision={refreshRevision} canWriteStreams={canWriteStreams} onChanged={onChanged} onToast={onToast} /> : null}
   </div>;
 }
 
-function RecoveryWorkspace({ connectionId, streamKey, groups, canExecute, onChanged, onToast }: Omit<Props, "canWriteStreams" | "canManageGroups"> & { canExecute: boolean }) {
+function PendingRecoveryWorkspace({ connectionId, streamKey, groups, refreshRevision, canExecute, onChanged, onInspectEntry, onToast }: {
+  connectionId: string;
+  streamKey: string;
+  groups: ConsumerGroup[];
+  refreshRevision: number;
+  canExecute: boolean;
+  onChanged: () => Promise<void>;
+  onInspectEntry: (entryId: string) => void;
+  onToast: (toast: ToastState) => void;
+}) {
   const { locale, t } = useI18n();
-  const [action, setAction] = useState<RecoveryPlanInput["action"]>("xautoclaim");
+  const [groupName, setGroupName] = useState("");
+  const [pending, setPending] = useState<PendingEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const requestSequence = useRef(0);
+
+  useEffect(() => {
+    setGroupName((current) => groups.some((group) => group.name === current)
+      ? current
+      : groups.find((group) => group.pending > 0)?.name ?? groups[0]?.name ?? "");
+  }, [groups]);
+
+  const loadPending = useCallback(async () => {
+    const requestID = ++requestSequence.current;
+    if (!groupName) {
+      setPending([]);
+      setLoading(false);
+      setError("");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const response = await api.pending(connectionId, streamKey, groupName);
+      if (requestID !== requestSequence.current) return;
+      setPending(response.items);
+    } catch (cause) {
+      if (requestID !== requestSequence.current) return;
+      setPending([]);
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to load pending messages."));
+    } finally {
+      if (requestID === requestSequence.current) setLoading(false);
+    }
+  }, [connectionId, groupName, streamKey, t]);
+
+  useEffect(() => {
+    void loadPending();
+    return () => { requestSequence.current += 1; };
+  }, [loadPending, refreshRevision]);
+
+  const selectedGroup = groups.find((group) => group.name === groupName);
+  return <div className="pending-recovery-workspace">
+    <header className="pending-recovery-header">
+      <label><span>{t("Consumer group")}</span><select value={groupName} disabled={!groups.length} onChange={(event) => setGroupName(event.target.value)}>{groups.map((group) => <option key={group.name} value={group.name}>{group.name} · {group.pending.toLocaleString(locale)} {t("pending")}</option>)}</select></label>
+      <div><span>{t("Pending")}</span><strong>{selectedGroup?.pending.toLocaleString(locale) ?? "0"}</strong></div>
+      <div><span>{t("Lag")}</span><strong>{selectedGroup ? (selectedGroup.lag < 0 ? "—" : selectedGroup.lag.toLocaleString(locale)) : "0"}</strong></div>
+      <button type="button" onClick={() => void loadPending()} disabled={loading || !groupName}><RefreshCw size={16} />{t("Refresh")}</button>
+    </header>
+
+    {error ? <div className="delivery-inline-error" role="alert">{error}</div> : null}
+    <div className="pending-recovery-list">
+      <div className="pending-recovery-list-head"><span>{t("Entry")}</span><span>{t("Owner")}</span><span>{t("Idle")}</span><span>{t("Deliveries")}</span><span /></div>
+      {pending.map((entry) => <div className="pending-recovery-row" key={entry.id}>
+        <strong className="mono" title={entry.id}>{entry.id}</strong>
+        <span className="mono" title={entry.consumer}>{entry.consumer}</span>
+        <span>{formatDuration(entry.idleMs)}</span>
+        <span>{entry.retryCount.toLocaleString(locale)}</span>
+        <button type="button" onClick={() => onInspectEntry(entry.id)}><ExternalLink size={15} />{t("Inspect")}</button>
+      </div>)}
+      {!pending.length && !loading ? <div className="panel-empty">{t("No pending messages in this group.")}</div> : null}
+      {loading ? <div className="panel-empty">{t("Loading pending messages…")}</div> : null}
+    </div>
+
+    <details className="advanced-recovery-tools">
+      <summary><span>{t("Advanced tools")}</span><ChevronDown size={16} /></summary>
+      <AdvancedRecoveryTools connectionId={connectionId} streamKey={streamKey} groups={groups} canExecute={canExecute} onChanged={onChanged} onToast={onToast} />
+    </details>
+  </div>;
+}
+
+function AdvancedRecoveryTools({ connectionId, streamKey, groups, canExecute, onChanged, onToast }: {
+  connectionId: string;
+  streamKey: string;
+  groups: ConsumerGroup[];
+  canExecute: boolean;
+  onChanged: () => Promise<void>;
+  onToast: (toast: ToastState) => void;
+}) {
+  const { locale, t } = useI18n();
+  const [action, setAction] = useState<"xautoclaim" | "xgroup-setid">("xautoclaim");
   const [group, setGroup] = useState(groups[0]?.name ?? "");
-  const [consumer, setConsumer] = useState("redisstreamscope-recovery");
-  const [ids, setIDs] = useState("");
+  const [consumer, setConsumer] = useState("");
+  const [availableConsumers, setAvailableConsumers] = useState<string[]>([]);
+  const [consumerLoading, setConsumerLoading] = useState(false);
+  const [consumerError, setConsumerError] = useState("");
   const [minIdleMs, setMinIdleMs] = useState(60000);
   const [count, setCount] = useState(100);
   const [start, setStart] = useState("0-0");
   const [targetID, setTargetID] = useState("0-0");
   const [prepared, setPrepared] = useState<RecoveryPlanInput | null>(null);
   const [plan, setPlan] = useState<RecoveryPlan | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [lastClaimed, setLastClaimed] = useState<{ consumer: string; ids: string[] } | null>(null);
+  const consumerRequestSequence = useRef(0);
+  const previewSequence = useRef(0);
 
   useEffect(() => {
     if (!groups.some((item) => item.name === group)) setGroup(groups[0]?.name ?? "");
   }, [group, groups]);
-  useEffect(() => { setPlan(null); setPrepared(null); }, [action, connectionId, consumer, count, group, ids, minIdleMs, start, streamKey, targetID]);
+  useEffect(() => {
+    const requestID = ++consumerRequestSequence.current;
+    setConsumer("");
+    setAvailableConsumers([]);
+    setConsumerError("");
+    setLastClaimed(null);
+    if (action !== "xautoclaim" || !group) {
+      setConsumerLoading(false);
+      return;
+    }
+    setConsumerLoading(true);
+    void api.consumers(connectionId, streamKey, group).then((response) => {
+      if (requestID !== consumerRequestSequence.current) return;
+      const names = Array.from(new Set(response.items.map((item) => item.name).filter(Boolean)));
+      setAvailableConsumers(names);
+      setConsumer("");
+    }).catch((cause) => {
+      if (requestID !== consumerRequestSequence.current) return;
+      setConsumerError(cause instanceof Error ? t(cause.message) : t("Unable to load consumers."));
+    }).finally(() => {
+      if (requestID === consumerRequestSequence.current) setConsumerLoading(false);
+    });
+    return () => { consumerRequestSequence.current += 1; };
+  }, [action, connectionId, group, streamKey, t]);
+  useEffect(() => {
+    previewSequence.current += 1;
+    setPlan(null);
+    setPrepared(null);
+    setIdempotencyKey("");
+    setBusy(false);
+  }, [action, connectionId, consumer, count, group, minIdleMs, start, streamKey, targetID]);
 
-  const input = useMemo<RecoveryPlanInput>(() => {
-    const common = { action, connectionId, streamKey, group } as RecoveryPlanInput;
-    if (action === "xack") return { ...common, ids: splitIDs(ids) };
-    if (action === "xclaim") return { ...common, ids: splitIDs(ids), consumer, minIdleMs };
-    if (action === "xautoclaim") return { ...common, consumer, minIdleMs, count, start };
-    return { ...common, targetId: targetID };
-  }, [action, connectionId, consumer, count, group, ids, minIdleMs, start, streamKey, targetID]);
-
-  const preview = async () => {
-    setBusy(true); setError("");
-    try {
-      const next = await api.recoveryPlan(input);
-      setPrepared(input); setPlan(next);
-    } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the recovery plan."));
-    } finally { setBusy(false); }
+  const invalidatePreview = () => {
+    previewSequence.current += 1;
+    setPlan(null);
+    setPrepared(null);
+    setIdempotencyKey("");
   };
+
+  const input = useMemo<RecoveryPlanInput>(() => action === "xautoclaim"
+    ? { action, connectionId, streamKey, group, consumer, minIdleMs, count, start }
+    : { action, connectionId, streamKey, group, targetId: targetID }, [action, connectionId, consumer, count, group, minIdleMs, start, streamKey, targetID]);
+
+  const prepare = async () => {
+    if (action === "xautoclaim" && !consumer) return;
+    const requestID = ++previewSequence.current;
+    setBusy(true); setError(""); setPlan(null); setPrepared(null); setIdempotencyKey("");
+    try {
+      const response = await api.recoveryPlan(input);
+      if (requestID !== previewSequence.current) return;
+      setPrepared(input);
+      setPlan(response);
+      setIdempotencyKey(operationID());
+    } catch (cause) {
+      if (requestID !== previewSequence.current) return;
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the recovery plan."));
+    } finally {
+      if (requestID === previewSequence.current) setBusy(false);
+    }
+  };
+
   const execute = async () => {
     if (!plan || !prepared || !canExecute) return;
     setBusy(true); setError("");
     try {
-      const result = await api.executeRecovery({
-        ...prepared,
-        expectedCurrentGroupId: plan.expectedCurrentGroupId,
-        confirmation: plan.confirmation,
-        idempotencyKey: operationID(),
-      });
-      onToast({ kind: "success", title: t("Recovery completed"), message: t("{count} entries were affected.", { count: result.affected }) });
-      setPlan(null); setPrepared(null);
-      await onChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to execute recovery."));
-    } finally { setBusy(false); }
+      const result = await api.executeRecovery({ ...prepared, expectedCurrentGroupId: plan.expectedCurrentGroupId, confirmation: plan.confirmation, idempotencyKey });
+      if (result.affected === 0) {
+        onToast({ kind: "warning", title: t("No pending state changed"), message: t("The pending state changed before execution. Refresh and preview the action again.") });
+      } else if (prepared.action === "xautoclaim") {
+        const ids = result.messageIds ?? [];
+        setLastClaimed({ consumer: prepared.consumer ?? "", ids });
+        onToast({ kind: "success", title: t("PEL ownership reassigned"), message: t("{count} entries changed ownership. The target consumer must explicitly read its pending entries.", { count: result.affected }) });
+      } else {
+        onToast({ kind: "success", title: t("Recovery completed"), message: t("{count} entries were affected.", { count: result.affected }) });
+      }
+      setPlan(null); setPrepared(null); await onChanged();
+    } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to execute recovery.")); }
+    finally { setBusy(false); }
   };
 
-  return <div className="recovery-workspace">
+  return <div className="recovery-workspace advanced-recovery-workspace">
     <div className="recovery-form-grid">
-      <label>{t("Consumer group")}<select value={group} onChange={(event) => setGroup(event.target.value)} disabled={!groups.length}>{groups.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
-      <label>{t("Action")}<select value={action} onChange={(event) => setAction(event.target.value as RecoveryPlanInput["action"])}>
-        <option value="xautoclaim">XAUTOCLAIM</option><option value="xclaim">XCLAIM</option><option value="xack">XACK</option><option value="xgroup-setid">XGROUP SETID</option>
-      </select></label>
-      {action === "xclaim" || action === "xautoclaim" ? <label>{t("Target consumer")}<input value={consumer} onChange={(event) => setConsumer(event.target.value)} /></label> : null}
-      {action === "xclaim" || action === "xautoclaim" ? <label>{t("Minimum idle (ms)")}<input type="number" min={0} value={minIdleMs} onChange={(event) => setMinIdleMs(Number(event.target.value))} /></label> : null}
-      {action === "xautoclaim" ? <><label>{t("Start ID")}<input className="mono" value={start} onChange={(event) => setStart(event.target.value)} /></label><label>{t("Maximum entries")}<input type="number" min={1} max={500} value={count} onChange={(event) => setCount(Number(event.target.value))} /></label></> : null}
-      {action === "xack" || action === "xclaim" ? <label className="recovery-wide-field">{t("Entry IDs")}<textarea className="mono" rows={4} value={ids} onChange={(event) => setIDs(event.target.value)} placeholder={t("Whitespace or comma separated")} /></label> : null}
-      {action === "xgroup-setid" ? <label>{t("Target group ID")}<input className="mono" value={targetID} onChange={(event) => setTargetID(event.target.value)} /></label> : null}
+      <label>{t("Consumer group")}<select value={group} onChange={(event) => { invalidatePreview(); setGroup(event.target.value); }} disabled={busy || !groups.length}>{groups.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+      <label>{t("Action")}<select value={action} onChange={(event) => { invalidatePreview(); setAction(event.target.value as typeof action); }} disabled={busy}><option value="xautoclaim">XAUTOCLAIM</option><option value="xgroup-setid">XGROUP SETID</option></select></label>
+      {action === "xautoclaim" ? <><label>{t("Target consumer")}<select value={consumer} onChange={(event) => { invalidatePreview(); setConsumer(event.target.value); }} disabled={busy || consumerLoading || !availableConsumers.length}><option value="">{consumerLoading ? t("Loading…") : availableConsumers.length ? t("Select a consumer") : t("No active consumers")}</option>{availableConsumers.map((name) => <option key={name} value={name}>{name}</option>)}</select></label><label>{t("Minimum idle (ms)")}<input type="number" min={0} value={minIdleMs} disabled={busy} onChange={(event) => { invalidatePreview(); setMinIdleMs(Number(event.target.value)); }} /></label><label>{t("Start ID")}<input className="mono" value={start} disabled={busy} onChange={(event) => { invalidatePreview(); setStart(event.target.value); }} /></label><label>{t("Maximum entries")}<input type="number" min={1} max={500} value={count} disabled={busy} onChange={(event) => { invalidatePreview(); setCount(Number(event.target.value)); }} /></label></> : null}
+      {action === "xgroup-setid" ? <label>{t("Target group ID")}<input className="mono" value={targetID} disabled={busy} onChange={(event) => { invalidatePreview(); setTargetID(event.target.value); }} /></label> : null}
     </div>
-    <div className="recovery-actions"><button type="button" onClick={() => void preview()} disabled={busy || !group}>{busy ? t("Working…") : t("Preview plan")}</button></div>
-    {error ? <div className="metric-history-error" role="alert">{error}</div> : null}
+    {action === "xautoclaim" ? <p className="advanced-recovery-caveat">{t("XAUTOCLAIM only reassigns PEL ownership. The target consumer must explicitly read its pending entries.")}</p> : null}
+    {consumerError ? <div className="delivery-inline-error" role="alert">{consumerError}</div> : null}
+    <div className="recovery-actions"><button type="button" onClick={() => void prepare()} disabled={busy || !group || (action === "xautoclaim" && !consumer)}>{busy ? t("Working…") : t("Preview plan")}</button></div>
+    {error ? <div className="delivery-inline-error" role="alert">{error}</div> : null}
     {plan ? <div className="operation-plan">
       <header><div><ShieldCheck size={17} /><strong>{t("Execution plan")}</strong></div><span>{t("{count} eligible", { count: plan.candidateCount.toLocaleString(locale) })}</span></header>
-      <div className="operation-plan-summary"><span>{plan.action.toUpperCase()}</span><span className="mono">{plan.group}</span><span>{plan.requiredPermission}</span></div>
+      <div className="operation-plan-summary"><span>{plan.action.toUpperCase()}</span><span className="mono">{plan.group}</span>{prepared?.action === "xautoclaim" ? <span className="mono">{prepared.consumer}</span> : null}<span>{plan.requiredPermission}</span></div>
       {plan.pending.length ? <div className="operation-candidates">{plan.pending.slice(0, 8).map((item) => <div key={item.id}><span className="mono">{item.id}</span><span className="mono">{item.consumer}</span><span>{Math.round(item.idleMs / 1000)}s</span><span>{item.deliveryCount}×</span></div>)}</div> : null}
       {[...plan.warnings, ...plan.guarantees].map((message) => <p key={message}>{message}</p>)}
-      <footer><button className="primary-button" type="button" onClick={() => void execute()} disabled={busy || !canExecute || plan.candidateCount === 0}><CheckCircle2 size={14} />{canExecute ? t("Execute plan") : t("Read-only access")}</button></footer>
+      {prepared?.action === "xautoclaim" ? <p>{t("XAUTOCLAIM only reassigns PEL ownership. The target consumer must explicitly read its pending entries.")}</p> : null}
+      <footer><button className="primary-button" type="button" onClick={() => void execute()} disabled={busy || !canExecute || (action === "xautoclaim" && plan.candidateCount === 0)}><CheckCircle2 size={15} />{canExecute ? t("Execute plan") : t("Read-only access")}</button></footer>
+    </div> : null}
+    {lastClaimed ? <div className="advanced-recovery-result">
+      <strong>{t("PEL ownership reassigned")}</strong>
+      <span>{t("Target consumer")}: <b className="mono">{lastClaimed.consumer}</b></span>
+      {lastClaimed.ids.length ? <div>{lastClaimed.ids.slice(0, 20).map((id) => <span className="mono" key={id}>{id}</span>)}</div> : null}
+      <p>{t("The target consumer must explicitly read its pending entries.")}</p>
     </div> : null}
   </div>;
 }
 
-function QuarantineWorkspace({ connectionId, streamKey, groups, canManageGroups, canWriteStreams, onChanged, onToast }: Props) {
-  const { locale, t } = useI18n();
-  const [ids, setIDs] = useState("");
-  const [dlqStream, setDLQStream] = useState(`${streamKey}.dlq`);
-  const [group, setGroup] = useState(groups[0]?.name ?? "");
-  const [acknowledgeSource, setAcknowledgeSource] = useState(false);
-  const [prepared, setPrepared] = useState<QuarantineInput | null>(null);
-  const [plan, setPlan] = useState<QuarantinePlan | null>(null);
+function DeadLetterWorkspace({ connectionId, streamKey, refreshRevision, canWriteStreams, onChanged, onToast }: {
+  connectionId: string;
+  streamKey: string;
+  refreshRevision: number;
+  canWriteStreams: boolean;
+  onChanged: () => Promise<void>;
+  onToast: (toast: ToastState) => void;
+}) {
+  const { t } = useI18n();
   const [records, setRecords] = useState<QuarantineRecord[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
-  const [actionPlan, setActionPlan] = useState<{ action: "replay" | "skip"; confirmation: string; eligibleCount: number; targetStream?: string } | null>(null);
+  const [actionPlan, setActionPlan] = useState<{ action: "replay" | "skip"; confirmation: string; eligibleCount: number; targetStream?: string; idempotencyKey: string } | null>(null);
   const [replayTarget, setReplayTarget] = useState(streamKey);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const refreshRecords = useCallback(async () => {
-    try { setRecords((await api.quarantineRecords(connectionId, streamKey)).items); } catch { setRecords([]); }
-  }, [connectionId, streamKey]);
-  useEffect(() => { setDLQStream(`${streamKey}.dlq`); setReplayTarget(streamKey); setPlan(null); setPrepared(null); setSelected([]); void refreshRecords(); }, [refreshRecords, streamKey]);
-  useEffect(() => { if (!groups.some((item) => item.name === group)) setGroup(groups[0]?.name ?? ""); }, [group, groups]);
-  useEffect(() => { if (!canManageGroups || !canWriteStreams) setAcknowledgeSource(false); }, [canManageGroups, canWriteStreams]);
-  useEffect(() => { setPlan(null); setPrepared(null); }, [acknowledgeSource, connectionId, dlqStream, group, ids, streamKey]);
+    setBusy(true); setError("");
+    try { setRecords((await api.quarantineRecords(connectionId, streamKey)).items); }
+    catch (cause) { setRecords([]); setError(cause instanceof Error ? t(cause.message) : t("Unable to load DLQ records.")); }
+    finally { setBusy(false); }
+  }, [connectionId, streamKey, t]);
+  useEffect(() => { setReplayTarget(streamKey); setActionPlan(null); setSelected([]); void refreshRecords(); }, [refreshRecords, refreshRevision, streamKey]);
 
-  const input = useMemo<QuarantineInput>(() => ({ connectionId, sourceStream: streamKey, sourceGroup: acknowledgeSource ? group : undefined, dlqStream, ids: splitIDs(ids), acknowledgeSource }), [acknowledgeSource, connectionId, dlqStream, group, ids, streamKey]);
-  const canExecuteQuarantine = canWriteStreams && (!acknowledgeSource || canManageGroups);
-  const preview = async () => {
-    setBusy(true); setError("");
-    try { const next = await api.quarantinePlan(input); setPrepared(input); setPlan(next); }
-    catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare quarantine.")); }
-    finally { setBusy(false); }
-  };
-  const execute = async () => {
-    if (!plan || !prepared || !canExecuteQuarantine) return;
-    setBusy(true); setError("");
-    try {
-      const result = await api.executeQuarantine({ ...prepared, confirmation: plan.confirmation, idempotencyKey: operationID() });
-      onToast({ kind: "success", title: t("Quarantine completed"), message: t("{count} entries were copied to the DLQ.", { count: result.items.length }) });
-      setPlan(null); setPrepared(null); setIDs(""); await refreshRecords(); await onChanged();
-    } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to quarantine entries.")); }
-    finally { setBusy(false); }
-  };
   const prepareRecordAction = async (action: "replay" | "skip") => {
     if (!selected.length) return;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setActionPlan(null);
     try {
       const targetStream = action === "replay" ? replayTarget : undefined;
       const next = await api.quarantineActionPlan({ action, connectionId, recordIds: selected, targetStream });
-      setActionPlan({ action, confirmation: next.confirmation, eligibleCount: next.eligibleCount, targetStream });
+      setActionPlan({ action, confirmation: next.confirmation, eligibleCount: next.eligibleCount, targetStream, idempotencyKey: operationID() });
     } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the DLQ action.")); }
     finally { setBusy(false); }
   };
+
   const executeRecordAction = async () => {
     if (!actionPlan || !canWriteStreams) return;
     setBusy(true); setError("");
     try {
-      await api.executeQuarantineAction({ action: actionPlan.action, connectionId, recordIds: selected, targetStream: actionPlan.targetStream, confirmation: actionPlan.confirmation, idempotencyKey: operationID() });
+      await api.executeQuarantineAction({ action: actionPlan.action, connectionId, recordIds: selected, targetStream: actionPlan.targetStream, confirmation: actionPlan.confirmation, idempotencyKey: actionPlan.idempotencyKey });
       onToast({ kind: "success", title: t("DLQ updated"), message: t("The selected records were updated.") });
-      setActionPlan(null); setSelected([]); await refreshRecords(); await onChanged();
+      setActionPlan(null); setSelected([]); await Promise.all([refreshRecords(), onChanged()]);
     } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to update the DLQ records.")); }
     finally { setBusy(false); }
   };
 
-  return <div className="recovery-workspace">
-    <div className="recovery-form-grid">
-      <label>{t("DLQ stream")}<input className="mono" value={dlqStream} onChange={(event) => setDLQStream(event.target.value)} /></label>
-      <label className="checkbox-field"><input type="checkbox" checked={acknowledgeSource} disabled={!canWriteStreams || !canManageGroups || !groups.length} onChange={(event) => setAcknowledgeSource(event.target.checked)} /><span>{t("Acknowledge source after DLQ write")}</span></label>
-      {acknowledgeSource ? <label>{t("Source consumer group")}<select value={group} disabled={!groups.length} onChange={(event) => setGroup(event.target.value)}>{groups.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label> : null}
-      <label className="recovery-wide-field">{t("Entry IDs")}<textarea className="mono" rows={4} value={ids} onChange={(event) => setIDs(event.target.value)} placeholder={t("Whitespace or comma separated")} /></label>
-    </div>
-    <div className="recovery-actions"><button type="button" onClick={() => void preview()} disabled={busy || !input.ids.length}>{busy ? t("Working…") : t("Preview quarantine")}</button></div>
-    {error ? <div className="metric-history-error" role="alert">{error}</div> : null}
-    {plan ? <div className="operation-plan"><header><div><ShieldCheck size={17} /><strong>{t("Quarantine plan")}</strong></div><span>{t("{count} entries · {size}", { count: plan.entryCount, size: `${plan.payloadBytes.toLocaleString(locale)} B` })}</span></header>
-      {plan.missingIds.length ? <p className="operation-warning">{t("Missing IDs: {ids}", { ids: plan.missingIds.join(", ") })}</p> : null}
-      {plan.guarantees.map((message) => <p key={message}>{message}</p>)}
-      <footer><button className="primary-button" type="button" onClick={() => void execute()} disabled={busy || !canExecuteQuarantine || plan.entryCount === 0 || plan.missingIds.length > 0}><Archive size={14} />{canExecuteQuarantine ? t("Execute quarantine") : t("Read-only access")}</button></footer>
-    </div> : null}
-    <div className="quarantine-records">
-      <header><strong>{t("Quarantined entries")}</strong><button type="button" onClick={() => void refreshRecords()}>{t("Refresh")}</button></header>
-      {records.map((record) => <label className="quarantine-record" key={record.id}>
-        <input type="checkbox" disabled={record.status !== "quarantined"} checked={selected.includes(record.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, record.id] : current.filter((id) => id !== record.id))} />
-        <span className="mono">{record.sourceId}</span><span className={`status-dot status-${record.status}`}>{record.status}</span><span className="mono">{record.dlqStream}</span>
+  return <div className="dead-letter-workspace">
+    <header><strong>{t("Dead letter records")}</strong><button type="button" onClick={() => void refreshRecords()} disabled={busy}><RefreshCw size={16} />{t("Refresh")}</button></header>
+    {error ? <div className="delivery-inline-error" role="alert">{error}</div> : null}
+    <div className="dead-letter-list">
+      {records.map((record) => <label className="dead-letter-record" key={record.id}>
+        <input type="checkbox" disabled={record.status !== "quarantined"} checked={selected.includes(record.id)} onChange={(event) => { setSelected((current) => event.target.checked ? [...current, record.id] : current.filter((id) => id !== record.id)); setActionPlan(null); }} />
+        <span><small>{t("Source entry")}</small><strong className="mono" title={record.sourceId}>{record.sourceId}</strong></span>
+        <span><small>{t("DLQ entry")}</small><strong className="mono" title={record.dlqEntryId}>{record.dlqEntryId}</strong></span>
+        <span><small>{t("Status")}</small><strong className={`status-dot status-${record.status}`}>{t(record.status)}</strong></span>
       </label>)}
-      {!records.length ? <div className="panel-empty">{t("No quarantine records.")}</div> : null}
-      {selected.length ? <div className="quarantine-actions"><input className="mono" value={replayTarget} onChange={(event) => { setReplayTarget(event.target.value); setActionPlan(null); }} aria-label={t("Replay target stream")} /><button type="button" onClick={() => void prepareRecordAction("replay")} disabled={busy}>{t("Preview replay")}</button><button type="button" onClick={() => void prepareRecordAction("skip")} disabled={busy}>{t("Preview skip")}</button></div> : null}
-      {actionPlan ? <div className="operation-plan compact"><p>{t("{count} records are eligible for {action}.", { count: actionPlan.eligibleCount, action: actionPlan.action })}</p><footer><button className="primary-button" type="button" onClick={() => void executeRecordAction()} disabled={busy || !canWriteStreams}>{t("Execute {action}", { action: actionPlan.action })}</button></footer></div> : null}
+      {!records.length && !busy ? <div className="panel-empty">{t("No dead letter records.")}</div> : null}
     </div>
+    {selected.length ? <div className="dead-letter-actions"><label><span>{t("Replay target stream")}</span><input className="mono" value={replayTarget} onChange={(event) => { setReplayTarget(event.target.value); setActionPlan(null); }} /></label><button type="button" onClick={() => void prepareRecordAction("replay")} disabled={busy}>{t("Preview replay")}</button><button type="button" onClick={() => void prepareRecordAction("skip")} disabled={busy}>{t("Preview skip")}</button></div> : null}
+    {actionPlan ? <div className="operation-plan compact"><p>{t("{count} records are eligible for {action}.", { count: actionPlan.eligibleCount, action: actionPlan.action })}</p><footer><button className="primary-button" type="button" onClick={() => void executeRecordAction()} disabled={busy || !canWriteStreams}>{busy ? t("Working…") : t("Execute {action}", { action: actionPlan.action })}</button></footer></div> : null}
   </div>;
+}
+
+function formatDuration(milliseconds: number) {
+  const duration = Math.max(0, milliseconds);
+  if (duration < 1000) return `${duration} ms`;
+  if (duration < 60000) return `${Math.round(duration / 1000)} s`;
+  if (duration < 3600000) return `${Math.round(duration / 60000)} min`;
+  return `${Math.round(duration / 3600000)} h`;
 }

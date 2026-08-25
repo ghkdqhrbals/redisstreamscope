@@ -27,6 +27,7 @@ import {
 import { api } from "../api";
 import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
 import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
+import { MessageDeliveryPanel } from "../components/MessageDeliveryPanel";
 import { RecoveryCenter } from "../components/RecoveryCenter";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { StreamInsightsPanel } from "../components/StreamInsightsPanel";
@@ -64,6 +65,9 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const [groups, setGroups] = useState<ConsumerGroup[]>([]);
   const [groupError, setGroupError] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [inspectedEntry, setInspectedEntry] = useState<RedisEntry | null>(null);
+  const [inspectedEntrySourceMissing, setInspectedEntrySourceMissing] = useState(false);
+  const [entryInspectorPreferredTab, setEntryInspectorPreferredTab] = useState<"payload" | "delivery">("payload");
   const [streamQuery, setStreamQuery] = useState("");
   const [search, setSearch] = useState("");
   const [messageSort, setMessageSort] = useState<{ key: MessageSortKey; direction: "asc" | "desc" }>({ key: "id", direction: "desc" });
@@ -77,6 +81,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const [messagesSectionOpen, setMessagesSectionOpen] = useState(true);
   const [groupsSectionOpen, setGroupsSectionOpen] = useState(true);
   const [recoverySectionOpen, setRecoverySectionOpen] = useState(false);
+  const [recoveryRefreshRevision, setRecoveryRefreshRevision] = useState(0);
   const [insightsSectionOpen, setInsightsSectionOpen] = useState(false);
   const [streamMutation, setStreamMutation] = useState("");
   const [selectedGroupName, setSelectedGroupName] = useState("");
@@ -115,6 +120,8 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setHasMoreEntries(false);
       setGroups([]);
       setGroupError("");
+      setInspectedEntry(null);
+      setInspectedEntrySourceMissing(false);
       return;
     }
     setGroupError("");
@@ -135,8 +142,72 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     setEntryPageCursor("+");
     setEntryCursorHistory([]);
     setHasMoreEntries(entryResponse.hasMore);
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
     setSelectedId(entryResponse.items[0]?.id ?? "");
   }, [t]);
+
+  const refreshDeliveryContext = useCallback(async () => {
+    if (!connectionId || !key) return;
+    const [groupResult, overviewResult] = await Promise.allSettled([
+      api.groups(connectionId, key),
+      api.overview(connectionId),
+    ]);
+    if (groupResult.status === "fulfilled") {
+      setGroups(groupResult.value.items);
+      setGroupError("");
+    } else {
+      setGroupError(groupResult.reason instanceof Error ? t(groupResult.reason.message) : t("Unable to load consumer details."));
+    }
+    if (overviewResult.status === "fulfilled") {
+      setOverviewStreams(overviewResult.value.items);
+      const current = overviewResult.value.items.find((stream) => stream.key === key);
+      if (current) setStreams((items) => items.map((stream) => stream.key === key ? {
+        ...stream,
+        length: current.length,
+        monitored: current.monitored,
+        available: current.available,
+        redisType: current.redisType,
+      } : stream));
+    }
+    setRecoveryRefreshRevision((current) => current + 1);
+  }, [connectionId, key, t]);
+
+  const refreshRecoveryContext = useCallback(async () => {
+    if (!connectionId || !key) return;
+    const [entryResult, groupResult, overviewResult] = await Promise.allSettled([
+      api.entries(connectionId, key, messagePageSize, entryPageCursor),
+      api.groups(connectionId, key),
+      api.overview(connectionId),
+    ]);
+    if (entryResult.status === "fulfilled") {
+      const preservedEntry = selectedId
+        ? inspectedEntry ?? entries.find((entry) => entry.id === selectedId) ?? null
+        : null;
+      setEntries(entryResult.value.items);
+      setEntryCursor(entryResult.value.nextCursor);
+      setHasMoreEntries(entryResult.value.hasMore);
+      if (preservedEntry && !entryResult.value.items.some((entry) => entry.id === preservedEntry.id)) setInspectedEntry(preservedEntry);
+    }
+    if (groupResult.status === "fulfilled") {
+      setGroups(groupResult.value.items);
+      setGroupError("");
+    } else {
+      setGroupError(groupResult.reason instanceof Error ? t(groupResult.reason.message) : t("Unable to load consumer details."));
+    }
+    if (overviewResult.status === "fulfilled") {
+      setOverviewStreams(overviewResult.value.items);
+      const current = overviewResult.value.items.find((stream) => stream.key === key);
+      if (current) setStreams((items) => items.map((stream) => stream.key === key ? {
+        ...stream,
+        length: current.length,
+        monitored: current.monitored,
+        available: current.available,
+        redisType: current.redisType,
+      } : stream));
+    }
+    setRecoveryRefreshRevision((current) => current + 1);
+  }, [connectionId, entries, entryPageCursor, inspectedEntry, key, selectedId, t]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -250,7 +321,9 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     return messageSort.direction === "asc" ? comparison : -comparison;
   }), [filteredEntries, messageSort]);
   const selectedIndex = displayedEntries.findIndex((entry) => entry.id === selectedId);
-  const selectedEntry = selectedIndex >= 0 ? displayedEntries[selectedIndex] : null;
+  const selectedEntry = inspectedEntry?.id === selectedId
+    ? inspectedEntry
+    : selectedIndex >= 0 ? displayedEntries[selectedIndex] : null;
   const selectedStream = streams.find((stream) => stream.key === key);
   const selectedGroup = groups.find((group) => group.name === selectedGroupName) ?? null;
   const showEntryInspector = tab === "messages" && selectedEntry;
@@ -260,7 +333,35 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const moveSelection = (step: number) => {
     if (!displayedEntries.length) return;
     const next = Math.min(displayedEntries.length - 1, Math.max(0, selectedIndex + step));
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
     setSelectedId(displayedEntries[next].id);
+  };
+
+  const inspectRecoveryEntry = async (entryId: string) => {
+    const loaded = entries.find((entry) => entry.id === entryId);
+    if (loaded) {
+      setInspectedEntry(null);
+      setInspectedEntrySourceMissing(false);
+      setEntryInspectorPreferredTab("delivery");
+      setSelectedId(entryId);
+      setTab("messages");
+      setMessagesSectionOpen(true);
+      return;
+    }
+    setError("");
+    try {
+      const response = await api.entries(connectionId, key, 1, entryId);
+      const entry = response.items.find((item) => item.id === entryId);
+      setInspectedEntry(entry ?? { id: entryId, timestamp: streamIDTimestamp(entryId), fields: {} });
+      setInspectedEntrySourceMissing(!entry);
+      setEntryInspectorPreferredTab("delivery");
+      setSelectedId(entryId);
+      setTab("messages");
+      setMessagesSectionOpen(true);
+    } catch (cause) {
+      onToast({ kind: "error", title: t("Unable to open message"), message: cause instanceof Error ? t(cause.message) : t("Unable to load the message.") });
+    }
   };
 
   const toggleMessageSort = (nextKey: MessageSortKey) => {
@@ -532,7 +633,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
               }}
             >
               <div className="message-table-body">
-              {displayedEntries.map((entry) => <button className={`message-row ${entry.id === selectedId && tab === "messages" ? "selected" : ""}`} key={entry.id} onClick={() => { setSelectedId(entry.id); setTab("messages"); }}>
+              {displayedEntries.map((entry) => <button className={`message-row ${entry.id === selectedId && tab === "messages" ? "selected" : ""}`} key={entry.id} onClick={() => { setInspectedEntry(null); setInspectedEntrySourceMissing(false); setEntryInspectorPreferredTab("payload"); setSelectedId(entry.id); setTab("messages"); }}>
                 <span className="mono id-cell">{entry.id}</span>
                 <span className="mono timestamp-cell">{formatTimestamp(entry.timestamp, locale)}</span>
                 <span className="mono fields-cell">{Object.entries(entry.fields).slice(0, 4).map(([field, value]) => `${field}=${String(value)}`).join("   ")}</span>
@@ -582,10 +683,10 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
             <div className="surface-heading stream-section-heading">
               <button type="button" className="stream-section-toggle" aria-expanded={recoverySectionOpen} onClick={() => setRecoverySectionOpen((current) => !current)}>
                 {recoverySectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-                <span><h2>{t("Recovery & DLQ")}</h2></span>
+                <span><h2>{t("Pending recovery & DLQ")}</h2></span>
               </button>
             </div>
-            {recoverySectionOpen ? <RecoveryCenter connectionId={connectionId} streamKey={key} groups={groups} canManageGroups={canManageGroups} canWriteStreams={canWrite} onChanged={() => loadEntriesAndGroups(connectionId, key)} onToast={onToast} /> : null}
+            {recoverySectionOpen ? <RecoveryCenter connectionId={connectionId} streamKey={key} groups={groups} refreshRevision={recoveryRefreshRevision} canManageGroups={canManageGroups} canWriteStreams={canWrite} onChanged={refreshRecoveryContext} onInspectEntry={(entryId) => { void inspectRecoveryEntry(entryId); }} onToast={onToast} /> : null}
           </section>
 
           <section className="stream-data-section stream-insights-section">
@@ -601,7 +702,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
         </div> : null}
       </section>
 
-      {showEntryInspector ? <EntryInspector entry={showEntryInspector} stream={key} onClose={() => setSelectedId("")} onMove={moveSelection} /> : null}
+      {showEntryInspector ? <EntryInspector connectionId={connectionId} entry={showEntryInspector} stream={key} preferredTab={entryInspectorPreferredTab} sourceMissing={inspectedEntrySourceMissing} canManageGroups={canManageGroups} canWriteStreams={canWrite} onChanged={refreshDeliveryContext} onToast={onToast} onClose={() => { setInspectedEntry(null); setInspectedEntrySourceMissing(false); setSelectedId(""); }} onMove={moveSelection} /> : null}
       {showGroupInspector ? <ConsumerGroupInspector group={showGroupInspector} stream={key} consumers={groupConsumers} pending={groupPending} loading={groupDetailLoading} onClose={() => setSelectedGroupName("")} /> : null}
       {canWrite && showAdd ? <AddMessageModal connectionId={connectionId} stream={key} onClose={() => setShowAdd(false)} onAdded={async (id) => {
         setShowAdd(false);
@@ -698,17 +799,33 @@ function ConsumerGroupInspector({
   </aside>;
 }
 
-function EntryInspector({ entry, stream, onClose, onMove }: { entry: RedisEntry; stream: string; onClose: () => void; onMove: (step: number) => void }) {
+function EntryInspector({ connectionId, entry, stream, preferredTab, sourceMissing, canManageGroups, canWriteStreams, onChanged, onToast, onClose, onMove }: {
+  connectionId: string;
+  entry: RedisEntry;
+  stream: string;
+  preferredTab: "payload" | "delivery";
+  sourceMissing: boolean;
+  canManageGroups: boolean;
+  canWriteStreams: boolean;
+  onChanged: () => Promise<void>;
+  onToast: (toast: ToastState) => void;
+  onClose: () => void;
+  onMove: (step: number) => void;
+}) {
   const { locale, t } = useI18n();
+  const [inspectorTab, setInspectorTab] = useState<"payload" | "delivery">(sourceMissing ? "delivery" : "payload");
   const [wrapLines, setWrapLines] = useState(true);
   const payload = useMemo(() => presentEntryPayload(entry.fields), [entry.fields]);
-  return <aside className="inspector">
+  useEffect(() => { setInspectorTab(sourceMissing ? "delivery" : preferredTab); }, [entry.id, preferredTab, sourceMissing]);
+  return <aside className="inspector entry-inspector">
     <InspectorResizeHandle />
-    <header><div><strong>{t("Entry details")}</strong><span className="mono">{entry.id}</span></div><div className="inspector-actions"><button onClick={() => onMove(-1)} aria-label={t("Previous entry")}><ChevronLeft size={16} /></button><button onClick={() => onMove(1)} aria-label={t("Next entry")}><ChevronRight size={16} /></button><button onClick={onClose} aria-label={t("Close entry details")}><X size={17} /></button></div></header>
-    <div className="inspector-tabs"><button className="active">{t("Payload")}</button></div>
-    <div className="code-toolbar"><span>{t(payload.format === "json" ? "JSON payload" : payload.format === "text" ? "Text payload" : "Redis fields")}</span><button className={wrapLines ? "active" : ""} aria-pressed={wrapLines} aria-label={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} title={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} onClick={() => setWrapLines((current) => !current)}><WrapText size={15} /></button></div>
-    <pre className={`payload-code-view ${wrapLines ? "wrap" : ""}`}>{payload.content}</pre>
-    <div className="inspector-section"><h4>{t("Metadata")}</h4><div className="detail-list"><div><span>Stream</span><strong className="mono">{stream}</strong></div><div><span>{t("Timestamp")}</span><strong className="mono">{formatTimestamp(entry.timestamp, locale)}</strong></div><div><span>{t("Size")}</span><strong>{new Blob([JSON.stringify(entry.fields)]).size} B</strong></div><div><span>{t("Fields")}</span><strong>{Object.keys(entry.fields).length}</strong></div></div></div>
+    <header><div><strong>{t("Entry details")}</strong><span className="mono">{entry.id}</span>{sourceMissing ? <em className="source-entry-missing">{t("Source entry unavailable")}</em> : null}</div><div className="inspector-actions"><button onClick={() => onMove(-1)} aria-label={t("Previous entry")}><ChevronLeft size={16} /></button><button onClick={() => onMove(1)} aria-label={t("Next entry")}><ChevronRight size={16} /></button><button onClick={onClose} aria-label={t("Close entry details")}><X size={17} /></button></div></header>
+    <div className="inspector-tabs" role="tablist">{!sourceMissing ? <button type="button" role="tab" aria-selected={inspectorTab === "payload"} className={inspectorTab === "payload" ? "active" : ""} onClick={() => setInspectorTab("payload")}>{t("Payload")}</button> : null}<button type="button" role="tab" aria-selected={inspectorTab === "delivery"} className={inspectorTab === "delivery" ? "active" : ""} onClick={() => setInspectorTab("delivery")}>{t("Delivery")}</button></div>
+    {inspectorTab === "payload" ? <>
+      <div className="code-toolbar"><span>{t(payload.format === "json" ? "JSON payload" : payload.format === "text" ? "Text payload" : "Redis fields")}</span><button className={wrapLines ? "active" : ""} aria-pressed={wrapLines} aria-label={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} title={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} onClick={() => setWrapLines((current) => !current)}><WrapText size={15} /></button></div>
+      <pre className={`payload-code-view ${wrapLines ? "wrap" : ""}`}>{payload.content}</pre>
+      <div className="inspector-section"><h4>{t("Metadata")}</h4><div className="detail-list"><div><span>Stream</span><strong className="mono">{stream}</strong></div><div><span>{t("Timestamp")}</span><strong className="mono">{formatTimestamp(entry.timestamp, locale)}</strong></div><div><span>{t("Size")}</span><strong>{new Blob([JSON.stringify(entry.fields)]).size} B</strong></div><div><span>{t("Fields")}</span><strong>{Object.keys(entry.fields).length}</strong></div></div></div>
+    </> : <MessageDeliveryPanel connectionId={connectionId} streamKey={stream} entryId={entry.id} sourceAvailable={!sourceMissing} canManageGroups={canManageGroups} canWriteStreams={canWriteStreams} onChanged={onChanged} onToast={onToast} />}
   </aside>;
 }
 
@@ -828,6 +945,11 @@ function AddMessageModal({ connectionId, stream, onClose, onAdded }: { connectio
 function formatTimestamp(value: string, locale: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale, { hour12: false });
+}
+
+function streamIDTimestamp(id: string) {
+  const milliseconds = Number(id.split("-")[0]);
+  return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : id;
 }
 
 function entrySize(entry: RedisEntry) {

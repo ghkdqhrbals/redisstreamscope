@@ -715,6 +715,27 @@ export type RedisEntry = {
   fields: Record<string, string | number>;
 };
 
+export type MessageDeliveryGroup = {
+  group: string;
+  pending: boolean;
+  consumer?: string;
+  idleMs?: number;
+  deliveryCount?: number;
+  lag: number;
+  lastDeliveredId: string;
+  availableConsumers: string[];
+  consumerCount?: number;
+  consumersTruncated?: boolean;
+};
+
+export type MessageDelivery = {
+  entryId: string;
+  groups: MessageDeliveryGroup[];
+  totalGroups?: number;
+  groupsTruncated?: boolean;
+  notPendingMeaning?: string;
+};
+
 export type ConsumerGroup = {
   name: string;
   consumers: number;
