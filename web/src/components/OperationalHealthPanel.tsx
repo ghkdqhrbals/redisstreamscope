@@ -111,13 +111,13 @@ export function OperationalHealthPanel({ connectionId }: { connectionId: string 
       <ResizableGrid className="operational-streams operational-stream-grid" storageKey="operational-streams" columns={streamColumns} headerClassName="operational-stream-head">
         {snapshot.streams.map((stream) => <details key={stream.key} className={stream.risks.length || stream.poisonMessagesSampled ? "operational-stream-row has-risk" : "operational-stream-row"}>
           <summary>
-            <span className="mono" title={stream.key}><ChevronDown size={14} />{stream.key}</span>
-            <span>{stream.memoryBytes == null ? "—" : formatBytes(stream.memoryBytes)}</span>
-            <span>{stream.retentionWindowMs == null ? "—" : formatDuration(stream.retentionWindowMs)}</span>
-            <span>{stream.oldestPendingIdleMs == null ? "—" : formatDuration(stream.oldestPendingIdleMs)}</span>
-            <span>{stream.poisonMessagesSampled.toLocaleString(locale)}</span>
-            <span>{stream.drainEtaSeconds == null ? "—" : formatDuration(stream.drainEtaSeconds * 1000)}</span>
-            <span>{stream.risks.length ? stream.risks.map((risk) => t(riskLabel(risk))).join(", ") : t("None")}</span>
+            <span className="mono" data-label={t("Stream")} title={stream.key}><ChevronDown size={14} />{stream.key}</span>
+            <span data-label={t("Memory")}>{stream.memoryBytes == null ? "—" : formatBytes(stream.memoryBytes)}</span>
+            <span data-label={t("Retention window")}>{stream.retentionWindowMs == null ? "—" : formatDuration(stream.retentionWindowMs)}</span>
+            <span data-label={t("Oldest pending")}>{stream.oldestPendingIdleMs == null ? "—" : formatDuration(stream.oldestPendingIdleMs)}</span>
+            <span data-label={t("Poison")}>{stream.poisonMessagesSampled.toLocaleString(locale)}</span>
+            <span data-label={t("Drain ETA")}>{stream.drainEtaSeconds == null ? "—" : formatDuration(stream.drainEtaSeconds * 1000)}</span>
+            <span data-label={t("Risk")}>{stream.risks.length ? stream.risks.map((risk) => t(riskLabel(risk))).join(", ") : t("None")}</span>
           </summary>
           <div className="operational-stream-expanded">
             <dl className="operational-stream-facts">
@@ -130,7 +130,7 @@ export function OperationalHealthPanel({ connectionId }: { connectionId: string 
             </dl>
             {stream.error ? <div className="metric-history-error">{stream.error}</div> : null}
             <ResizableGrid className="operational-group-table" storageKey="operational-consumer-groups" columns={groupColumns} headerClassName="operational-group-head">
-            {stream.groups.map((group) => <div className="operational-group-row" key={group.name}><span className="mono" title={group.name}>{group.name}</span><span>{group.consumers.toLocaleString(locale)}</span><span>{group.lag == null ? "—" : group.lag.toLocaleString(locale)}</span><span>{group.pending.toLocaleString(locale)}</span><span>{group.backlog == null ? "—" : group.backlog.toLocaleString(locale)}</span><span>{group.pendingSample.oldestPendingIdleMs == null ? "—" : formatDuration(group.pendingSample.oldestPendingIdleMs)}</span><span>{group.pendingSample.p95PendingIdleMs == null ? "—" : formatDuration(group.pendingSample.p95PendingIdleMs)}</span><span>{group.pendingSample.maxDeliveryCount.toLocaleString(locale)}</span><span>{group.pendingSample.poisonMessagesSampled.toLocaleString(locale)}</span><span>{formatRate(group.netDrainRate, locale)}</span><span>{group.drainEtaSeconds == null ? "—" : formatDuration(group.drainEtaSeconds * 1000)}</span><span>{group.pendingSample.sampleTruncated ? t("Truncated") : `${group.pendingSample.sampled.toLocaleString(locale)}/${group.pending.toLocaleString(locale)}`}</span></div>)}
+            {stream.groups.map((group) => <div className="operational-group-row" key={group.name}><span className="mono" data-label={t("Consumer group")} title={group.name}>{group.name}</span><span data-label={t("Consumers")}>{group.consumers.toLocaleString(locale)}</span><span data-label={t("Lag")}>{group.lag == null ? "—" : group.lag.toLocaleString(locale)}</span><span data-label={t("Pending")}>{group.pending.toLocaleString(locale)}</span><span data-label={t("Backlog")}>{group.backlog == null ? "—" : group.backlog.toLocaleString(locale)}</span><span data-label={t("Oldest sampled")}>{group.pendingSample.oldestPendingIdleMs == null ? "—" : formatDuration(group.pendingSample.oldestPendingIdleMs)}</span><span data-label={t("P95 pending idle")}>{group.pendingSample.p95PendingIdleMs == null ? "—" : formatDuration(group.pendingSample.p95PendingIdleMs)}</span><span data-label={t("Max delivery")}>{group.pendingSample.maxDeliveryCount.toLocaleString(locale)}</span><span data-label={t("Poison sampled")}>{group.pendingSample.poisonMessagesSampled.toLocaleString(locale)}</span><span data-label={t("Net drain / s")}>{formatRate(group.netDrainRate, locale)}</span><span data-label={t("Drain ETA")}>{group.drainEtaSeconds == null ? "—" : formatDuration(group.drainEtaSeconds * 1000)}</span><span data-label={t("Sample")}>{group.pendingSample.sampleTruncated ? t("Truncated") : `${group.pendingSample.sampled.toLocaleString(locale)}/${group.pending.toLocaleString(locale)}`}</span></div>)}
             {!stream.groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
             </ResizableGrid>
           </div>

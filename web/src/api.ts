@@ -121,15 +121,6 @@ export const api = {
   quarantinePlan: (input: QuarantineInput) => request<QuarantinePlan>("/api/quarantine/plans", { method: "POST", body: JSON.stringify(input) }),
   executeQuarantine: (input: QuarantineInput & { confirmation: string; idempotencyKey: string }) =>
     request<{ ok: boolean; items: QuarantineRecord[]; acknowledged: number; idempotentReplay?: boolean }>("/api/quarantine/executions", { method: "POST", body: JSON.stringify(input) }),
-  quarantineRecords: (connectionId: string, streamKey: string, status = "all", cursor?: number) => {
-    const query = new URLSearchParams({ connectionId, key: streamKey, status, limit: "25" });
-    if (cursor) query.set("cursor", String(cursor));
-    return request<{ items: QuarantineRecord[]; nextCursor?: number; hasMore: boolean }>(`/api/quarantine/records?${query.toString()}`);
-  },
-  quarantineActionPlan: (input: { action: "replay" | "skip"; connectionId: string; recordIds: number[]; targetStream?: string }) =>
-    request<{ action: string; eligibleCount: number; confirmation: string; records: QuarantineRecord[]; guarantees: string[] }>("/api/quarantine/actions/plans", { method: "POST", body: JSON.stringify(input) }),
-  executeQuarantineAction: (input: { action: "replay" | "skip"; connectionId: string; recordIds: number[]; targetStream?: string; confirmation: string; idempotencyKey: string }) =>
-    request<{ ok: boolean; action: string; items: QuarantineRecord[]; idempotentReplay?: boolean }>("/api/quarantine/actions", { method: "POST", body: JSON.stringify(input) }),
   telemetryTokens: () => request<{ items: TelemetryToken[] }>("/api/telemetry/tokens"),
   createTelemetryToken: (name: string) => request<TelemetryToken & { token: string }>("/api/telemetry/tokens", { method: "POST", body: JSON.stringify({ name }) }),
   updateTelemetryToken: (id: string, input: { name: string; enabled: boolean }) => request<TelemetryToken>(`/api/telemetry/tokens/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }),

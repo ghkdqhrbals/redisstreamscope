@@ -87,6 +87,13 @@ func TestRedisVersionCompatibility(t *testing.T) {
 	if length != 3 {
 		t.Fatalf("XADD MAXLEN retained %d entries, want 3", length)
 	}
+	memoryBytes, err := client.MemoryUsage(ctx, streamKey, 5).Result()
+	if err != nil {
+		t.Fatalf("MEMORY USAGE with bounded sampling: %v", err)
+	}
+	if memoryBytes <= 0 {
+		t.Fatalf("MEMORY USAGE returned %d bytes, want a positive value", memoryBytes)
+	}
 
 	scanResult, err := client.Do(ctx, "SCAN", 0, "MATCH", prefix+":*", "COUNT", 100, "TYPE", "stream").Result()
 	if err != nil {

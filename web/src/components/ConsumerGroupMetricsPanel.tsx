@@ -10,6 +10,7 @@ type ConsumerGroupMetricsPanelProps = {
   connectionId: string;
   streamKey: string;
   monitored: boolean;
+  mode?: "stream" | "group";
   leadingControls?: ReactNode;
   groups?: ConsumerGroup[];
   selectedGroupName?: string;
@@ -18,18 +19,15 @@ type ConsumerGroupMetricsPanelProps = {
 
 type GroupPerformance = {
   latest: ConsumerGroupMetricValue | null;
-  lagHistory: number[];
 };
 
 type OperationalSummary = {
   backlog: number | null;
-  consumeRate: number | null;
+  pending: number | null;
+  deliveryRate: number | null;
+  activeConsumers: number | null;
   oldestPendingIdAgeMs: number | null;
   oldestPendingIdleMs: number | null;
-  maxDeliveryCount: number | null;
-  poisonMessagesSampled: number | null;
-  netDrainRate: number | null;
-  drainEtaSeconds: number | null;
 };
 
 const groupLineClasses = [
@@ -45,6 +43,7 @@ export function ConsumerGroupMetricsPanel({
   connectionId,
   streamKey,
   monitored,
+  mode = "stream",
   leadingControls,
   groups,
   selectedGroupName = "",
@@ -54,7 +53,6 @@ export function ConsumerGroupMetricsPanel({
   const [range, setRange] = useState<StreamMetricSeries["range"]>("5m");
   const [metrics, setMetrics] = useState<ConsumerGroupMetricSeries | null>(null);
   const [operationalSnapshot, setOperationalSnapshot] = useState<OperationalSnapshot | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState("");
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -131,7 +129,6 @@ export function ConsumerGroupMetricsPanel({
   useEffect(() => {
     requestSequence.current += 1;
     inFlightRequest.current = null;
-    setSelectedGroup("");
     setMetrics(null);
     setOperationalSnapshot(null);
     operationalSnapshotRef.current = null;
@@ -154,32 +151,47 @@ export function ConsumerGroupMetricsPanel({
     return () => window.clearInterval(timer);
   }, [connectionId, live, load, monitored, streamKey]);
 
-  useEffect(() => {
-    if (selectedGroup && !metrics?.groups.includes(selectedGroup)) setSelectedGroup("");
-  }, [metrics?.groups, selectedGroup]);
-
-  useEffect(() => {
-    if (selectedGroupName && metrics?.groups.includes(selectedGroupName)) setSelectedGroup(selectedGroupName);
-  }, [metrics?.groups, selectedGroupName]);
-
-  const visibleGroups = useMemo(
-    () => selectedGroup ? [selectedGroup] : metrics?.groups ?? [],
-    [metrics?.groups, selectedGroup],
-  );
   const formatLag = useCallback((value: number) => Math.round(value).toLocaleString(locale), [locale]);
-  const consumeSeries = useGroupSeries(visibleGroups, t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."), groupConsumeRate, formatRate);
-  const lagSeries = useGroupSeries(visibleGroups, t("Entries that have not yet been delivered to this consumer group."), groupLag, formatLag);
-  const delaySeries = useGroupSeries(visibleGroups, t("Age of the group's most recently delivered Stream ID at collection time. This is not processing latency."), groupObservedDeliveryAge, formatMilliseconds);
+  const streamBacklogSeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
+    id: "stream-backlog",
+    label: t("Backlog"),
+    description: t("Backlog is undelivered lag plus delivered entries still awaiting ACK."),
+    className: "metric-line-primary",
+    value: aggregateBacklog,
+    format: formatLag,
+  }], [formatLag, t]);
+  const streamDeliverySeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
+    id: "stream-delivery-rate",
+    label: t("Consumer delivery rate"),
+    description: t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."),
+    className: "metric-line-primary",
+    value: aggregateDeliveryRate,
+    format: formatRate,
+  }], [t]);
+  const groupBacklogSeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
+    id: "group-undelivered",
+    label: t("Undelivered lag"),
+    description: t("Entries that have not yet been delivered to this consumer group."),
+    className: "metric-line-group-0",
+    value: (point) => selectedGroupName ? groupLag(point, selectedGroupName) : null,
+    format: formatLag,
+  }, {
+    id: "group-pending",
+    label: t("Pending"),
+    description: t("Delivered messages that remain unacknowledged in the PEL."),
+    className: "metric-line-group-1",
+    value: (point) => selectedGroupName ? groupPending(point, selectedGroupName) : null,
+    format: formatLag,
+  }], [formatLag, selectedGroupName, t]);
+  const selectedMetricGroups = useMemo(() => selectedGroupName ? [selectedGroupName] : [], [selectedGroupName]);
+  const groupDeliverySeries = useGroupSeries(selectedMetricGroups, t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."), groupConsumeRate, formatRate);
+  const groupDelaySeries = useGroupSeries(selectedMetricGroups, t("Age of the group's most recently delivered Stream ID at collection time. This is not processing latency."), groupObservedDeliveryAge, formatMilliseconds);
   const groupColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "name", label: t("Name"), defaultWidth: 200, minWidth: 150, grow: true },
-    { id: "consumers", label: t("Consumers"), defaultWidth: 90, minWidth: 75 },
+    { id: "name", label: t("Consumer groups"), defaultWidth: 240, minWidth: 170, grow: true },
     { id: "backlog", label: t("Backlog"), defaultWidth: 128, minWidth: 104 },
-    { id: "rate", label: t("Consume rate"), defaultWidth: 108, minWidth: 90 },
+    { id: "pending", label: t("Pending"), defaultWidth: 108, minWidth: 88 },
+    { id: "rate", label: t("Consumer delivery rate"), defaultWidth: 146, minWidth: 118 },
     { id: "oldest", label: t("Oldest pending"), defaultWidth: 154, minWidth: 128 },
-    { id: "delivery", label: t("Delivery attempts"), defaultWidth: 148, minWidth: 120 },
-    { id: "drain", label: t("Net drain / s"), defaultWidth: 112, minWidth: 94 },
-    { id: "eta", label: t("Drain ETA"), defaultWidth: 108, minWidth: 88 },
-    { id: "trend", label: t("Lag trend"), defaultWidth: 104, minWidth: 84 },
     { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 38, minWidth: 28 },
   ], [t]);
   const performanceByGroup = useMemo(() => buildGroupPerformance(metrics), [metrics]);
@@ -191,10 +203,10 @@ export function ConsumerGroupMetricsPanel({
     () => new Map((operationalStream?.groups ?? []).map((group) => [group.name, group])),
     [operationalStream?.groups],
   );
-  const selectedScopeGroup = selectedGroup;
+  const selectedScopeGroup = mode === "group" ? selectedGroupName : "";
   const operationalSummary = useMemo(
-    () => buildOperationalSummary(operationalStream, selectedScopeGroup, performanceByGroup),
-    [operationalStream, performanceByGroup, selectedScopeGroup],
+    () => buildOperationalSummary(operationalStream, selectedScopeGroup, performanceByGroup, groups ?? []),
+    [groups, operationalStream, performanceByGroup, selectedScopeGroup],
   );
   const sortedGroups = useMemo(() => [...(groups ?? [])].sort((left, right) => {
     const leftOperational = operationalByGroup.get(left.name);
@@ -211,19 +223,17 @@ export function ConsumerGroupMetricsPanel({
     ? t("Select a stream to view consumer group history.")
     : !monitored
       ? t("Add this stream to monitoring to collect consumer group history.")
-      : !metrics?.groups.length
+      : mode === "group" && !selectedGroupName
+        ? t("Select a consumer group to view its history.")
+        : !metrics?.groups.length || (mode === "group" && !metrics.groups.includes(selectedGroupName))
         ? t("Waiting for consumer group samples…")
         : "";
 
-  return <section className="metric-history-panel consumer-group-metrics-panel">
+  return <section className={`metric-history-panel consumer-group-metrics-panel consumer-group-metrics-panel--${mode}`}>
     <header className="metric-history-header">
       <div><h2>{t("Consumer group performance")}</h2><span>{metrics ? t("{seconds}s samples", { seconds: metrics.intervalSeconds }) : t("Time series")}</span></div>
       <div className="metric-history-controls">
         {leadingControls}
-        {metrics && metrics.groups.length > 1 ? <select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)} aria-label={t("Metric consumer group")}>
-          <option value="">{t("All consumer groups")}</option>
-          {metrics.groups.map((group) => <option key={group} value={group}>{group}</option>)}
-        </select> : null}
         <select value={range} onChange={(event) => setRange(event.target.value as StreamMetricSeries["range"])} aria-label={t("Time range")}>
           <option value="1m">{t("Last minute")}</option>
           <option value="5m">{t("Last 5 minutes")}</option>
@@ -238,61 +248,55 @@ export function ConsumerGroupMetricsPanel({
       </div>
     </header>
     {error ? <div className="metric-history-error">{error}</div> : null}
-    {monitored && streamKey ? <OperationalKpis summary={operationalSummary} /> : null}
-    {groups ? <ResizableGrid className="simple-table" storageKey="stream-consumer-group-performance" columns={groupColumns} headerClassName="simple-head">
+    {monitored && streamKey && (mode === "stream" || selectedGroupName) ? <OperationalKpis summary={operationalSummary} mode={mode} /> : null}
+    {mode === "stream" && groups ? <ResizableGrid className="simple-table" storageKey="stream-consumer-group-performance" columns={groupColumns} headerClassName="simple-head">
       {sortedGroups.map((group) => {
         const performance = performanceByGroup.get(group.name);
         const latest = performance?.latest;
         const operational = operationalByGroup.get(group.name);
         const backlog = currentBacklog(group, operational);
-        const openGroup = () => {
-          setSelectedGroup(group.name);
-          onOpenGroup?.(group.name);
-        };
         return <button
           type="button"
           className={`simple-row group-row ${selectedGroupName === group.name ? "selected" : ""}`}
           key={group.name}
-          aria-label={`${group.name}; ${t("Consumers")}: ${group.consumers.toLocaleString(locale)}; ${t("Backlog")}: ${formatCount(backlog ?? null, locale)}; ${t("Pending")}: ${group.pending.toLocaleString(locale)}; ${t("Drain ETA")}: ${formatDuration(operational?.drainEtaSeconds == null ? undefined : operational.drainEtaSeconds * 1000)}`}
-          onClick={openGroup}
+          aria-label={`${group.name}; ${t("Backlog")}: ${formatCount(backlog ?? null, locale)}; ${t("Pending")}: ${group.pending.toLocaleString(locale)}; ${t("Consumer delivery rate")}: ${latest?.consumeRate == null ? "—" : formatRate(latest.consumeRate)}; ${t("Oldest pending")}: ${formatDuration(operational?.pendingSample.oldestPendingIdAgeMs)}`}
+          onClick={() => onOpenGroup?.(group.name)}
         >
           <span className="group-metric-name"><UsersRound size={15} /><strong title={group.name}>{group.name}</strong></span>
-          <span className="group-metric-value" data-label={t("Consumers")}>{group.consumers.toLocaleString(locale)}</span>
           <span className="group-metric-value" data-label={t("Backlog")} title={t("Backlog is undelivered lag plus delivered entries still awaiting ACK.")}>
             {formatCount(backlog ?? null, locale)} <small>{t("{lag} lag · {pending} pending", { lag: group.lag < 0 ? "—" : group.lag.toLocaleString(locale), pending: group.pending.toLocaleString(locale) })}</small>
           </span>
-          <span className="group-metric-value" data-label={t("Consume rate")} title={t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion.")}>{latest?.consumeRate == null ? "—" : formatRate(latest.consumeRate)}</span>
+          <span className="group-metric-value" data-label={t("Pending")}>{group.pending.toLocaleString(locale)}</span>
+          <span className="group-metric-value" data-label={t("Consumer delivery rate")} title={t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion.")}>{latest?.consumeRate == null ? "—" : formatRate(latest.consumeRate)}</span>
           <span className="group-metric-value" data-label={t("Oldest pending")} title={t("Oldest pending entry age and time since its last delivery.")}>
             {formatDuration(operational?.pendingSample.oldestPendingIdAgeMs)} <small>{t("{idle} idle", { idle: formatDuration(operational?.pendingSample.oldestPendingIdleMs) })}</small>
           </span>
-          <span className="group-metric-value" data-label={t("Delivery attempts")} title={t("Maximum sampled delivery count and sampled entries over the poison threshold.")}>
-            {operational ? `${operational.pendingSample.maxDeliveryCount.toLocaleString(locale)}×` : "—"} <small>{t("{count} poison sampled", { count: operational?.pendingSample.poisonMessagesSampled.toLocaleString(locale) ?? "—" })}</small>
-          </span>
-          <span className="group-metric-value" data-label={t("Net drain / s")} title={t("Positive means backlog is draining; negative means it is growing.")}>{formatNetDrain(operational?.netDrainRate)}</span>
-          <span className="group-metric-value" data-label={t("Drain ETA")} title={t("Estimated time to clear the current backlog at the observed net drain rate.")}>{formatDuration(operational?.drainEtaSeconds == null ? undefined : operational.drainEtaSeconds * 1000)}</span>
-          <span className="group-metric-trend" data-label={t("Lag trend")}><LagSparkline groupName={group.name} values={performance?.lagHistory ?? []} /></span>
           <ChevronRight className="group-metric-open" size={16} />
         </button>;
       })}
       {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
     </ResizableGrid> : null}
-    {emptyMessage ? <div className="consumer-group-metrics-empty">{emptyMessage}</div> : <div className="metric-chart-grid">
-      <MetricTimeSeriesChart title={t("Consumer delivery rate")} points={metrics?.items ?? []} series={consumeSeries} />
-      <MetricTimeSeriesChart title={t("Undelivered lag")} points={metrics?.items ?? []} series={lagSeries} />
-      <MetricTimeSeriesChart title={t("Last-delivered entry age")} points={metrics?.items ?? []} series={delaySeries} />
+    {emptyMessage ? <div className="consumer-group-metrics-empty">{emptyMessage}</div> : <div className={`metric-chart-grid consumer-group-chart-grid consumer-group-chart-grid--${mode}`}>
+      {mode === "stream" ? <>
+        <MetricTimeSeriesChart title={t("Backlog")} points={metrics?.items ?? []} series={streamBacklogSeries} valueKind="count" />
+        <MetricTimeSeriesChart title={t("Consumer delivery rate")} points={metrics?.items ?? []} series={streamDeliverySeries} valueKind="rate" />
+      </> : <>
+        <MetricTimeSeriesChart title={`${t("Backlog")} · ${t("Pending")}`} points={metrics?.items ?? []} series={groupBacklogSeries} valueKind="count" />
+        <MetricTimeSeriesChart title={t("Consumer delivery rate")} points={metrics?.items ?? []} series={groupDeliverySeries} valueKind="rate" />
+        <MetricTimeSeriesChart title={t("Last-delivered entry age")} points={metrics?.items ?? []} series={groupDelaySeries} valueKind="duration" />
+      </>}
     </div>}
   </section>;
 }
 
-function OperationalKpis({ summary }: { summary: OperationalSummary }) {
+function OperationalKpis({ summary, mode }: { summary: OperationalSummary; mode: "stream" | "group" }) {
   const { locale, t } = useI18n();
-  return <div className="consumer-operational-kpis" role="group" aria-label={t("Consumer group operational summary")}>
+  return <div className={`consumer-operational-kpis consumer-operational-kpis--${mode}`} role="group" aria-label={t("Consumer group operational summary")}>
     <div title={t("Undelivered lag plus delivered entries still awaiting ACK.")}><span>{t("Backlog")}</span><strong>{formatCount(summary.backlog, locale)}</strong></div>
-    <div title={t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion.")}><span>{t("Consume rate")}</span><strong>{summary.consumeRate == null ? "—" : formatRate(summary.consumeRate)}</strong></div>
-    <div title={t("Age of the oldest sampled pending entry and time since its last delivery.")}><span>{t("Oldest pending")}</span><strong>{formatDuration(summary.oldestPendingIdAgeMs ?? undefined)}</strong><small>{t("{idle} idle", { idle: formatDuration(summary.oldestPendingIdleMs ?? undefined) })}</small></div>
-    <div title={t("Maximum sampled delivery count and sampled entries over the poison threshold.")}><span>{t("Delivery attempts")}</span><strong>{summary.maxDeliveryCount == null ? "—" : `${summary.maxDeliveryCount.toLocaleString(locale)}×`}</strong><small>{t("{count} poison sampled", { count: formatCount(summary.poisonMessagesSampled, locale) })}</small></div>
-    <div title={t("Positive means backlog is draining; negative means it is growing.")}><span>{t("Net drain / s")}</span><strong>{formatNetDrain(summary.netDrainRate ?? undefined)}</strong></div>
-    <div title={t("Estimated time to clear the current backlog at the observed net drain rate.")}><span>{t("Drain ETA")}</span><strong>{formatDuration(summary.drainEtaSeconds == null ? undefined : summary.drainEtaSeconds * 1000)}</strong></div>
+    <div title={t("Delivered messages that remain unacknowledged in the PEL.")}><span>{t("Pending")}</span><strong>{formatCount(summary.pending, locale)}</strong></div>
+    <div title={t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion.")}><span>{t("Consumer delivery rate")}</span><strong>{summary.deliveryRate == null ? "—" : formatRate(summary.deliveryRate)}</strong></div>
+    <div title={t("Consumers currently registered across the selected consumer groups.")}><span>{t("Registered consumers")}</span><strong>{formatCount(summary.activeConsumers, locale)}</strong></div>
+    {mode === "group" ? <div title={t("Age of the oldest sampled pending entry and time since its last delivery.")}><span>{t("Oldest pending")}</span><strong>{formatDuration(summary.oldestPendingIdAgeMs ?? undefined)}</strong><small>{t("{idle} idle", { idle: formatDuration(summary.oldestPendingIdleMs ?? undefined) })}</small></div> : null}
   </div>;
 }
 
@@ -311,30 +315,37 @@ function buildOperationalSummary(
   stream: StreamOperationalHealth | null,
   selectedGroup: string,
   performanceByGroup: Map<string, GroupPerformance>,
+  currentGroups: ConsumerGroup[],
 ): OperationalSummary {
-  const groups = selectedGroup
-    ? stream?.groups.filter((group) => group.name === selectedGroup) ?? []
-    : stream?.groups ?? [];
-  const metricGroups = selectedGroup
+  const operationalByName = new Map((stream?.groups ?? []).map((group) => [group.name, group]));
+  const currentByName = new Map(currentGroups.map((group) => [group.name, group]));
+  const names = selectedGroup
     ? [selectedGroup]
-    : Array.from(new Set([...(stream?.groups.map((group) => group.name) ?? []), ...performanceByGroup.keys()]));
+    : currentGroups.length
+      ? currentGroups.map((group) => group.name)
+      : stream?.groups.map((group) => group.name) ?? [];
+  const backlogValues = names.map((name) => {
+    const current = currentByName.get(name);
+    const operational = operationalByName.get(name);
+    if (current) return currentBacklog(current, operational);
+    return operational?.backlog ?? null;
+  });
+  const pendingValues = names.map((name) => currentByName.get(name)?.pending ?? operationalByName.get(name)?.pending);
+  const consumerValues = names.map((name) => currentByName.get(name)?.consumers ?? operationalByName.get(name)?.consumers);
+  const operationalGroups = names.map((name) => operationalByName.get(name)).filter((group): group is StreamOperationalHealth["groups"][number] => Boolean(group));
   return {
-    backlog: sumKnown(groups.map((group) => group.backlog)),
-    consumeRate: sumKnown(metricGroups.map((group) => performanceByGroup.get(group)?.latest?.consumeRate)),
-    oldestPendingIdAgeMs: maximumKnown(groups.map((group) => group.pendingSample.oldestPendingIdAgeMs)),
-    oldestPendingIdleMs: maximumKnown(groups.map((group) => group.pendingSample.oldestPendingIdleMs)),
-    maxDeliveryCount: maximumKnown(groups.map((group) => group.pendingSample.maxDeliveryCount)),
-    poisonMessagesSampled: sumKnown(groups.map((group) => group.pendingSample.poisonMessagesSampled)),
-    netDrainRate: sumKnown(groups.map((group) => group.netDrainRate)),
-    drainEtaSeconds: selectedGroup
-      ? groups[0]?.drainEtaSeconds ?? null
-      : stream?.drainEtaSeconds ?? maximumKnown(groups.map((group) => group.drainEtaSeconds)),
+    backlog: sumComplete(backlogValues),
+    pending: sumComplete(pendingValues),
+    deliveryRate: sumComplete(names.map((name) => performanceByGroup.get(name)?.latest?.consumeRate)),
+    activeConsumers: sumComplete(consumerValues),
+    oldestPendingIdAgeMs: maximumKnown(operationalGroups.map((group) => group.pendingSample.oldestPendingIdAgeMs)),
+    oldestPendingIdleMs: maximumKnown(operationalGroups.map((group) => group.pendingSample.oldestPendingIdleMs)),
   };
 }
 
-function sumKnown(values: Array<number | null | undefined>) {
-  const known = values.filter((value): value is number => value != null && Number.isFinite(value));
-  return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
+function sumComplete(values: Array<number | null | undefined>) {
+  if (!values.length || values.some((value) => value == null || !Number.isFinite(value))) return null;
+  return (values as number[]).reduce((sum, value) => sum + value, 0);
 }
 
 function maximumKnown(values: Array<number | null | undefined>) {
@@ -351,40 +362,12 @@ function buildGroupPerformance(metrics: ConsumerGroupMetricSeries | null) {
   const result = new Map<string, GroupPerformance>();
   for (const point of metrics?.items ?? []) {
     for (const [groupName, value] of Object.entries(point.values)) {
-      const current = result.get(groupName) ?? { latest: null, lagHistory: [] };
+      const current = result.get(groupName) ?? { latest: null };
       current.latest = value;
-      if (value.lag !== null) current.lagHistory.push(value.lag);
       result.set(groupName, current);
     }
   }
   return result;
-}
-
-function LagSparkline({ groupName, values }: { groupName: string; values: number[] }) {
-  const { t } = useI18n();
-  const visible = values.slice(-32);
-  if (visible.length < 2) return <span aria-label={t("No lag trend available")}>—</span>;
-
-  const width = 96;
-  const height = 24;
-  const minimum = Math.min(...visible);
-  const maximum = Math.max(...visible);
-  const range = Math.max(1, maximum - minimum);
-  const points = visible.map((value, index) => {
-    const x = (index / (visible.length - 1)) * width;
-    const y = height - 3 - ((value - minimum) / range) * (height - 6);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-
-  return <svg
-    viewBox={`0 0 ${width} ${height}`}
-    role="img"
-    aria-label={t("Lag trend for {group}", { group: groupName })}
-    preserveAspectRatio="none"
-    style={{ width: "84px", height: "24px", color: "#555960" }}
-  >
-    <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-  </svg>;
 }
 
 function useGroupSeries(
@@ -414,12 +397,6 @@ function formatRate(value: number) {
   return `${value.toFixed(value < 10 ? 2 : 1)} /s`;
 }
 
-function formatNetDrain(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  const formatted = value.toFixed(Math.abs(value) < 10 ? 2 : 1);
-  return `${value > 0 ? "+" : ""}${formatted}/s`;
-}
-
 function formatDuration(milliseconds: number | null | undefined) {
   if (milliseconds == null || !Number.isFinite(milliseconds)) return "—";
   if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
@@ -439,6 +416,22 @@ function groupConsumeRate(point: ConsumerGroupMetricPoint, group: string) {
 
 function groupLag(point: ConsumerGroupMetricPoint, group: string) {
   return point.values[group]?.lag ?? null;
+}
+
+function groupPending(point: ConsumerGroupMetricPoint, group: string) {
+  return point.values[group]?.pending ?? null;
+}
+
+function aggregateBacklog(point: ConsumerGroupMetricPoint) {
+  const values = Object.values(point.values);
+  if (!values.length || values.some((value) => value.lag === null)) return null;
+  return values.reduce((sum, value) => sum + (value.lag ?? 0) + value.pending, 0);
+}
+
+function aggregateDeliveryRate(point: ConsumerGroupMetricPoint) {
+  const values = Object.values(point.values).map((value) => value.consumeRate);
+  if (!values.length || values.some((value) => value === null || !Number.isFinite(value))) return null;
+  return (values as number[]).reduce((sum, value) => sum + value, 0);
 }
 
 function groupObservedDeliveryAge(point: ConsumerGroupMetricPoint, group: string) {
