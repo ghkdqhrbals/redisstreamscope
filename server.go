@@ -699,6 +699,7 @@ func (s *apiServer) overview(writer http.ResponseWriter, request *http.Request) 
 type overviewStream struct {
 	Key            string `json:"key"`
 	Length         int64  `json:"length"`
+	MemoryBytes    *int64 `json:"memoryBytes"`
 	ConsumerGroups int    `json:"consumerGroups"`
 	TotalLag       int64  `json:"totalLag"`
 	LagKnown       bool   `json:"lagKnown"`
@@ -711,6 +712,13 @@ type overviewStream struct {
 
 type overviewPipelineClient interface {
 	Pipelined(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
+}
+
+type streamMetadataClient interface {
+	Type(context.Context, string) *redis.StatusCmd
+	XLen(context.Context, string) *redis.IntCmd
+	XInfoGroups(context.Context, string) *redis.XInfoGroupsCmd
+	MemoryUsage(context.Context, string, ...int) *redis.IntCmd
 }
 
 func collectOverviewStreams(
@@ -794,18 +802,20 @@ func collectOverviewStreams(
 
 func collectOverviewBatch(
 	ctx context.Context,
-	client redis.UniversalClient,
+	client streamMetadataClient,
 	pipelineClient overviewPipelineClient,
 	canPipeline bool,
 	keys []string,
 ) ([]overviewStream, error) {
 	lengthCommands := make([]*redis.IntCmd, len(keys))
 	groupCommands := make([]*redis.XInfoGroupsCmd, len(keys))
+	memoryCommands := make([]*redis.IntCmd, len(keys))
 	if canPipeline {
 		_, _ = pipelineClient.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 			for index, key := range keys {
 				lengthCommands[index] = pipe.XLen(ctx, key)
 				groupCommands[index] = pipe.XInfoGroups(ctx, key)
+				memoryCommands[index] = pipe.MemoryUsage(ctx, key, 5)
 			}
 			return nil
 		})
@@ -813,6 +823,7 @@ func collectOverviewBatch(
 		for index, key := range keys {
 			lengthCommands[index] = client.XLen(ctx, key)
 			groupCommands[index] = client.XInfoGroups(ctx, key)
+			memoryCommands[index] = client.MemoryUsage(ctx, key, 5)
 		}
 	}
 
@@ -834,13 +845,25 @@ func collectOverviewBatch(
 			}
 		}
 		groupCount, totalLag, lagKnown, pending, lastConsumed := summarizeOverviewGroups(groups)
+		memoryBytes := optionalMemoryUsage(memoryCommands[index])
 		items = append(items, overviewStream{
-			Key: key, Length: length, ConsumerGroups: groupCount,
+			Key: key, Length: length, MemoryBytes: memoryBytes, ConsumerGroups: groupCount,
 			TotalLag: totalLag, LagKnown: lagKnown, Pending: pending, LastConsumed: lastConsumed,
 			Available: true, RedisType: "stream",
 		})
 	}
 	return items, nil
+}
+
+func optionalMemoryUsage(command *redis.IntCmd) *int64 {
+	if command == nil {
+		return nil
+	}
+	value, err := command.Result()
+	if err != nil || value < 0 {
+		return nil
+	}
+	return &value
 }
 
 func summarizeOverviewGroups(groups []redis.XInfoGroup) (int, int64, bool, int64, string) {
@@ -950,46 +973,92 @@ func (s *apiServer) streams(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	keys = visibleKeys
-	items := make([]map[string]any, 0, len(keys))
-	for _, key := range keys {
-		_, isMonitored := monitoredKeys[key]
-		redisType := "stream"
-		available := true
-		if isMonitored {
-			redisType, err = connection.client.Type(request.Context(), key).Result()
-			if err != nil {
-				writeRedisError(writer, err)
-				return
-			}
-			available = redisType == "stream"
+	pipelineClient, canPipeline := connection.client.(overviewPipelineClient)
+	items, err := collectStreamListItems(request.Context(), connection.client, pipelineClient, canPipeline, keys, monitoredKeys)
+	if err != nil {
+		writeRedisError(writer, err)
+		return
+	}
+	sort.SliceStable(items, func(left, right int) bool {
+		if items[left].Available != items[right].Available {
+			return items[left].Available
 		}
-		if !available {
-			items = append(items, map[string]any{
-				"key": key, "length": int64(0), "monitored": true, "available": false, "redisType": redisType,
+		if items[left].Monitored != items[right].Monitored {
+			return items[left].Monitored
+		}
+		return items[left].Key < items[right].Key
+	})
+	writeJSON(writer, http.StatusOK, map[string]any{"items": items, "nextCursor": next, "hasMore": next != 0})
+}
+
+type streamListItem struct {
+	Key         string `json:"key"`
+	Length      int64  `json:"length"`
+	MemoryBytes *int64 `json:"memoryBytes"`
+	Monitored   bool   `json:"monitored"`
+	Available   bool   `json:"available"`
+	RedisType   string `json:"redisType"`
+}
+
+func collectStreamListItems(
+	ctx context.Context,
+	client streamMetadataClient,
+	pipelineClient overviewPipelineClient,
+	canPipeline bool,
+	keys []string,
+	monitoredKeys map[string]struct{},
+) ([]streamListItem, error) {
+	typeCommands := make([]*redis.StatusCmd, len(keys))
+	lengthCommands := make([]*redis.IntCmd, len(keys))
+	memoryCommands := make([]*redis.IntCmd, len(keys))
+	if canPipeline {
+		_, _ = pipelineClient.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for index, key := range keys {
+				if _, monitored := monitoredKeys[key]; monitored {
+					typeCommands[index] = pipe.Type(ctx, key)
+				}
+				lengthCommands[index] = pipe.XLen(ctx, key)
+				memoryCommands[index] = pipe.MemoryUsage(ctx, key, 5)
+			}
+			return nil
+		})
+	} else {
+		for index, key := range keys {
+			if _, monitored := monitoredKeys[key]; monitored {
+				typeCommands[index] = client.Type(ctx, key)
+			}
+			lengthCommands[index] = client.XLen(ctx, key)
+			memoryCommands[index] = client.MemoryUsage(ctx, key, 5)
+		}
+	}
+
+	items := make([]streamListItem, 0, len(keys))
+	for index, key := range keys {
+		_, monitored := monitoredKeys[key]
+		redisType := "stream"
+		if typeCommands[index] != nil {
+			value, err := typeCommands[index].Result()
+			if err != nil {
+				return nil, err
+			}
+			redisType = value
+		}
+		if redisType != "stream" {
+			items = append(items, streamListItem{
+				Key: key, Monitored: monitored, Available: false, RedisType: redisType,
 			})
 			continue
 		}
-		length, lengthErr := connection.client.XLen(request.Context(), key).Result()
-		if lengthErr == nil {
-			items = append(items, map[string]any{
-				"key": key, "length": length, "monitored": isMonitored, "available": true, "redisType": "stream",
-			})
+		length, err := lengthCommands[index].Result()
+		if err != nil {
+			continue
 		}
+		items = append(items, streamListItem{
+			Key: key, Length: length, MemoryBytes: optionalMemoryUsage(memoryCommands[index]),
+			Monitored: monitored, Available: true, RedisType: "stream",
+		})
 	}
-	sort.SliceStable(items, func(left, right int) bool {
-		leftAvailable, _ := items[left]["available"].(bool)
-		rightAvailable, _ := items[right]["available"].(bool)
-		if leftAvailable != rightAvailable {
-			return leftAvailable
-		}
-		leftMonitored, _ := items[left]["monitored"].(bool)
-		rightMonitored, _ := items[right]["monitored"].(bool)
-		if leftMonitored != rightMonitored {
-			return leftMonitored
-		}
-		return items[left]["key"].(string) < items[right]["key"].(string)
-	})
-	writeJSON(writer, http.StatusOK, map[string]any{"items": items, "nextCursor": next, "hasMore": next != 0})
+	return items, nil
 }
 
 func (s *apiServer) addMonitoredStream(writer http.ResponseWriter, request *http.Request) {

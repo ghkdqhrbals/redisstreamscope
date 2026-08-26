@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Check,
@@ -38,6 +38,8 @@ type AccessLogPage = {
   summary: { total: number; allowed: number; denied: number };
 };
 
+type AccessTab = "users" | "roles" | "logs";
+
 const emptyLogPage: AccessLogPage = { items: [], nextCursor: null, hasMore: false, summary: { total: 0, allowed: 0, denied: 0 } };
 
 const rolePermissions: Record<string, string[]> = {
@@ -64,7 +66,7 @@ function permissionDiff(fromRole: string, toRole: string) {
 
 export function AccessControlView({ onToast }: { onToast: (toast: ToastState) => void }) {
   const { locale, t } = useI18n();
-  const [tab, setTab] = useState<"users" | "roles" | "logs">("users");
+  const [tab, setTab] = useState<AccessTab>("users");
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [logPage, setLogPage] = useState<AccessLogPage>(emptyLogPage);
   const [logCursor, setLogCursor] = useState<number | null>(null);
@@ -122,6 +124,20 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
     { id: "status", label: t("Status"), defaultWidth: 110, minWidth: 90 },
     { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 40, minWidth: 32 },
   ], [t]);
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const tabs: AccessTab[] = ["users", "roles", "logs"];
+    const currentIndex = tabs.indexOf(tab);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabs.length;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    setTab(nextTab);
+    window.requestAnimationFrame(() => document.getElementById(`access-tab-${nextTab}`)?.focus());
+  };
 
   return (
     <div className="access-page">
@@ -135,23 +151,23 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
         <div><KeyRound size={17} /><span>{t("Custom grants")}</span><strong>{grants.length}</strong><em>{t("{count} explicit deny", { count: grants.filter((grant) => grant.effect === "deny").length })}</em></div>
         <div className="access-summary-link"><button type="button" aria-label={t("Open denied access logs")} onClick={() => { setLogCursor(null); setLogCursorHistory([]); setLogResult("denied"); setTab("logs"); }}><Activity size={17} /><span>{t("Denied requests")}</span><strong>{deniedRequests}</strong><em>{t("of {count} matching requests", { count: logPage.summary.allowed + logPage.summary.denied })}</em></button></div>
       </div>
-      <div className="content-tabs access-tabs">
-        <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>{t("Users")}</button>
-        <button className={tab === "roles" ? "active" : ""} onClick={() => setTab("roles")}>{t("Roles & permissions")}</button>
-        <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>{t("Access logs")}</button>
+      <div className="content-tabs access-tabs" role="tablist" aria-label={t("Access Control")} onKeyDown={handleTabKeyDown}>
+        <button id="access-tab-users" role="tab" aria-selected={tab === "users"} aria-controls="access-panel-users" tabIndex={tab === "users" ? 0 : -1} className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>{t("Users")}</button>
+        <button id="access-tab-roles" role="tab" aria-selected={tab === "roles"} aria-controls="access-panel-roles" tabIndex={tab === "roles" ? 0 : -1} className={tab === "roles" ? "active" : ""} onClick={() => setTab("roles")}>{t("Roles & permissions")}</button>
+        <button id="access-tab-logs" role="tab" aria-selected={tab === "logs"} aria-controls="access-panel-logs" tabIndex={tab === "logs" ? 0 : -1} className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>{t("Access logs")}</button>
       </div>
 
       {tab === "users" ? (
-        <section className="access-surface">
+        <section id="access-panel-users" role="tabpanel" aria-labelledby="access-tab-users" className="access-surface">
           <div className="access-toolbar"><label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users…")} /></label><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">{t("All roles")}</option><option value="admin">{t("Admin")}</option><option value="operator">{t("Operator")}</option><option value="viewer">{t("Viewer")}</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">{t("All status")}</option><option value="active">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></div>
           <ResizableGrid className="users-table" storageKey="access-users" columns={userColumns} headerClassName="users-head">
             {filteredUsers.map((user) => (
               <div className="user-row" key={user.id}>
-                <span className="user-identity"><i>{user.displayName.slice(0, 2).toUpperCase()}</i><span><strong>{user.displayName}</strong><em>{user.username}</em></span></span>
-                <span className="user-role">{t(roleName(user.role))}</span>
-                <span className="scope-list">{user.role === "admin" ? <b>{t("All resources")}</b> : user.role === "operator" ? <b>{t("Configured Redis resources")}</b> : <b>{t("Read only")}</b>}</span>
-                <span>{user.lastLoginAt ? formatTime(user.lastLoginAt, locale) : t("Never")}</span>
-                <span className={user.enabled ? "user-status active" : "user-status"}><i />{user.enabled ? t("Active") : t("Disabled")}</span>
+                <span className="user-identity" data-label={t("User")}><i>{user.displayName.slice(0, 2).toUpperCase()}</i><span><strong>{user.displayName}</strong><em>{user.username}</em></span></span>
+                <span className="user-role" data-label={t("Role")}>{t(roleName(user.role))}</span>
+                <span className="scope-list" data-label={t("Resource access")}>{user.role === "admin" ? <b>{t("All resources")}</b> : user.role === "operator" ? <b>{t("Configured Redis resources")}</b> : <b>{t("Read only")}</b>}</span>
+                <span data-label={t("Last login")}>{user.lastLoginAt ? formatTime(user.lastLoginAt, locale) : t("Never")}</span>
+                <span className={user.enabled ? "user-status active" : "user-status"} data-label={t("Status")}><i />{user.enabled ? t("Active") : t("Disabled")}</span>
                 <button aria-label={t("Edit {username}", { username: user.username })} onClick={() => setEditingUser(user)}><Pencil size={15} /></button>
               </div>
             ))}
@@ -160,8 +176,8 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
         </section>
       ) : null}
 
-      {tab === "roles" ? <RolesPanel users={users} grants={grants} onGrantsChange={setGrants} onToast={onToast} /> : null}
-      {tab === "logs" ? <LogsPanel
+      {tab === "roles" ? <div id="access-panel-roles" role="tabpanel" aria-labelledby="access-tab-roles"><RolesPanel users={users} grants={grants} onGrantsChange={setGrants} onToast={onToast} /></div> : null}
+      {tab === "logs" ? <div id="access-panel-logs" role="tabpanel" aria-labelledby="access-tab-logs"><LogsPanel
         page={logPage}
         loading={logLoading}
         search={logSearch}
@@ -180,7 +196,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
           setLogCursorHistory((current) => [...current, logCursor]);
           setLogCursor(logPage.nextCursor);
         }}
-      /> : null}
+      /></div> : null}
       {showCreate ? <CreateUserModal onClose={() => setShowCreate(false)} onCreated={(user) => { setUsers((current) => [...current, user]); setShowCreate(false); onToast({ kind: "success", title: t("User created"), message: t("Created account {username}.", { username: user.username }) }); }} /> : null}
       {editingUser ? <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} onSaved={(next) => { setUsers((current) => current.map((item) => item.id === next.id ? next : item)); setEditingUser(null); onToast({ kind: "success", title: t("User updated"), message: t("Updated account and sessions for {username}.", { username: next.username }) }); }} /> : null}
     </div>
@@ -189,6 +205,8 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
 
 function EditUserModal({ user, onClose, onSaved }: { user: AccessUser; onClose: () => void; onSaved: (user: AccessUser) => void }) {
   const { t } = useI18n();
+  const titleId = useId();
+  const usernameRef = useDialogFocus<HTMLInputElement>(onClose);
   const [username, setUsername] = useState(user.username);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [role, setRole] = useState(user.role);
@@ -212,9 +230,9 @@ function EditUserModal({ user, onClose, onSaved }: { user: AccessUser; onClose: 
   };
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <form className="modal user-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <header><h2>{t("Manage user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
-        <div className="field-pair"><label>{t("Username")}<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
+      <form className="modal user-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <header><h2 id={titleId}>{t("Manage user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
+        <div className="field-pair"><label>{t("Username")}<input ref={usernameRef} value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
         <div className="field-pair"><label>{t("Basic role")}<select value={role} onChange={(event) => setRole(event.target.value)}><option value="viewer">{t("Viewer")}</option><option value="operator">{t("Operator")}</option><option value="admin">{t("Admin")}</option></select></label><label>{t("Status")}<select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")}><option value="enabled">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></label></div>
         {role !== user.role ? <section className="role-change-diff" aria-live="polite">
           <header><strong>{t("Role change")}</strong><span>{t(roleName(user.role))} → {t(roleName(role))}</span></header>
@@ -270,7 +288,7 @@ function RolesPanel({ users, grants, onGrantsChange, onToast }: { users: AccessU
         <ResizableGrid className="grant-table" storageKey="access-grants" columns={grantColumns} headerClassName="grant-head">
           {grants.length ? grants.map((grant) => {
             const user = users.find((item) => item.id === grant.userId);
-            return <div className="grant-row" key={grant.id}><span>{user?.username ?? grant.userId}</span><span className="mono">{grant.action}</span><span className="mono">{grant.scope}</span><span className={grant.effect}>{grant.effect === "allow" ? t("Allow") : t("Deny")}</span><span className="grant-actions"><button aria-label={t("Edit permission")} onClick={() => setEditingGrant(grant)}><Pencil size={13} /></button><button aria-label={t("Delete permission")} onClick={() => void deleteGrant(grant)}><X size={14} /></button></span></div>;
+            return <div className="grant-row" key={grant.id}><span data-label={t("Principal")}>{user?.username ?? grant.userId}</span><span className="mono" data-label={t("Action")}>{grant.action}</span><span className="mono" data-label={t("Scope")}>{grant.scope}</span><span className={grant.effect} data-label={t("Effect")}>{grant.effect === "allow" ? t("Allow") : t("Deny")}</span><span className="grant-actions"><button aria-label={t("Edit permission")} onClick={() => setEditingGrant(grant)}><Pencil size={13} /></button><button aria-label={t("Delete permission")} onClick={() => void deleteGrant(grant)}><X size={14} /></button></span></div>;
           }) : <div className="grant-empty">{t("There are no per-user permission overrides yet.")}</div>}
         </ResizableGrid>
       </section>
@@ -282,6 +300,8 @@ function RolesPanel({ users, grants, onGrantsChange, onToast }: { users: AccessU
 
 function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[]; initial?: Grant; onClose: () => void; onSaved: (grant: Grant) => void }) {
   const { t } = useI18n();
+  const titleId = useId();
+  const userRef = useDialogFocus<HTMLSelectElement>(onClose);
   const [userId, setUserId] = useState(initial?.userId ?? users.find((user) => user.role !== "admin")?.id ?? users[0]?.id ?? "");
   const [action, setAction] = useState(initial?.action ?? "streams:read");
   const [scope, setScope] = useState(initial?.scope ?? "stream:redis:*");
@@ -304,9 +324,9 @@ function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[];
   };
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <form className="modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <header><h2>{initial ? t("Edit resource permission") : t("Add resource permission")}</h2><button type="button" onClick={onClose} aria-label={t("Close permission dialog")}><X size={18} /></button></header>
-        <div className="field-pair"><label>{t("User")}<select value={userId} onChange={(event) => setUserId(event.target.value)}>{users.filter((user) => user.role !== "admin").map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label><label>{t("Effect")}<select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")}><option value="allow">{t("Allow")}</option><option value="deny">{t("Deny")}</option></select></label></div>
+      <form className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <header><h2 id={titleId}>{initial ? t("Edit resource permission") : t("Add resource permission")}</h2><button type="button" onClick={onClose} aria-label={t("Close permission dialog")}><X size={18} /></button></header>
+        <div className="field-pair"><label>{t("User")}<select ref={userRef} value={userId} onChange={(event) => setUserId(event.target.value)}>{users.filter((user) => user.role !== "admin").map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label><label>{t("Effect")}<select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")}><option value="allow">{t("Allow")}</option><option value="deny">{t("Deny")}</option></select></label></div>
         <label>{t("Action")}<select value={action} onChange={(event) => setAction(event.target.value)}><option>streams:read</option><option>streams:write</option><option>groups:read</option><option>groups:manage</option><option>connections:read</option><option>alerts:read</option><option>alerts:write</option><option>settings:read</option><option>settings:write</option><option>access-logs:read</option><option>users:read</option><option>users:write</option><option>roles:read</option><option>roles:write</option></select></label>
         <label>{t("Scope")}<input className="mono" value={scope} onChange={(event) => setScope(event.target.value)} placeholder="stream:redis:orders.*" required /></label>
         <div className="role-explainer"><ShieldCheck size={15} /><span>{t("An explicit Deny overrides the base role and Allow. Wildcards are supported only as a trailing *.")}</span></div>
@@ -344,7 +364,7 @@ function LogsPanel({ page, loading, search, onSearchChange, onRefresh, result, o
       <ResizableGrid className="logs-table" storageKey="access-logs" columns={logColumns} headerClassName="logs-head">
         {page.items.map((log, index) => (
           <div className="log-row" key={`${log.requestId ?? index}-${index}`}>
-            <span className="mono">{formatTime(String(log.createdAt), locale)}</span><strong>{String(log.username)}</strong><span className="mono">{String(log.action)}</span><span className="mono log-scope">{String(log.scope)}</span><span className={Number(log.status) < 400 ? "log-result allowed" : "log-result denied"}>{Number(log.status) < 400 ? t("Allowed") : t("Denied")} · {log.status}</span><span className="mono">{String(log.ip)}</span>
+            <span className="mono" data-label={t("Time")}>{formatTime(String(log.createdAt), locale)}</span><strong data-label={t("User")}>{String(log.username)}</strong><span className="mono" data-label={t("Action")}>{String(log.action)}</span><span className="mono log-scope" data-label={t("Scope")}>{String(log.scope)}</span><span className={Number(log.status) < 400 ? "log-result allowed" : "log-result denied"} data-label={t("Result")}>{Number(log.status) < 400 ? t("Allowed") : t("Denied")} · {log.status}</span><span className="mono" data-label={t("Source IP")}>{String(log.ip)}</span>
           </div>
         ))}
         {!page.items.length && !loading ? <div className="grant-empty">{t("No audit logs match the filters.")}</div> : null}
@@ -359,6 +379,8 @@ function LogsPanel({ page, loading, search, onSearchChange, onRefresh, result, o
 
 function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (user: AccessUser) => void }) {
   const { t } = useI18n();
+  const titleId = useId();
+  const usernameRef = useDialogFocus<HTMLInputElement>(onClose);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -380,9 +402,9 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
   };
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <form className="modal user-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <header><h2>{t("Add user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
-        <div className="field-pair"><label>{t("Username")}<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
+      <form className="modal user-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <header><h2 id={titleId}>{t("Add user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
+        <div className="field-pair"><label>{t("Username")}<input ref={usernameRef} value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
         <label>{t("Initial password")}<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
         <label>{t("Basic role")}<select value={role} onChange={(event) => setRole(event.target.value)}><option value="viewer">{t("Viewer — read only")}</option><option value="operator">{t("Operator — stream operations")}</option><option value="admin">{t("Admin — full access")}</option></select></label>
         <div className="role-explainer"><ShieldCheck size={15} /><span>{t("Detailed connection and stream permissions can be assigned under Resource overrides after account creation.")}</span></div>
@@ -391,6 +413,32 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
       </form>
     </div>
   );
+}
+
+function useDialogFocus<T extends HTMLElement>(onClose: () => void): RefObject<T | null> {
+  const initialFocusRef = useRef<T>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    initialFocusRef.current?.focus();
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onCloseRef.current();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      if (returnFocusElement?.isConnected) returnFocusElement.focus({ preventScroll: true });
+    };
+  }, []);
+
+  return initialFocusRef;
 }
 
 function formatTime(value: string, locale: string) {

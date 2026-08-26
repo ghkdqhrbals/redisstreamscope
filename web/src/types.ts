@@ -3,6 +3,7 @@ export type Page = "overview" | "streams" | "alerts" | "connections" | "access" 
 export type StreamItem = {
   key: string;
   length: number;
+  memoryBytes: number | null;
   monitored: boolean;
   available: boolean;
   redisType: string;

@@ -195,11 +195,11 @@ export function SettingsView({ username, canReadSettings, canWriteSettings, onUs
     <div className="system-page">
       <div className="page-header"><div><div className="breadcrumbs">{t("Settings")}</div><h1>{t("Console settings")}</h1></div></div>
       <div className="settings-layout">
-        <nav>
-          {canReadSettings ? <button className={section === "connections" ? "active" : ""} onClick={() => setSection("connections")}><Database size={15} />{t("Redis connections")}</button> : null}
-          {canReadSettings ? <button className={section === "telemetry" ? "active" : ""} onClick={() => setSection("telemetry")}><Activity size={15} />{t("Request telemetry")}</button> : null}
-          <button className={section === "account" ? "active" : ""} onClick={() => setSection("account")}><KeyRound size={15} />{t("Account")}</button>
-          <button className={section === "general" ? "active" : ""} onClick={() => setSection("general")}><Settings2 size={15} />{t("General")}</button>
+        <nav aria-label={t("Settings")}>
+          {canReadSettings ? <button aria-current={section === "connections" ? "page" : undefined} className={section === "connections" ? "active" : ""} onClick={() => setSection("connections")}><Database size={15} />{t("Redis connections")}</button> : null}
+          {canReadSettings ? <button aria-current={section === "telemetry" ? "page" : undefined} className={section === "telemetry" ? "active" : ""} onClick={() => setSection("telemetry")}><Activity size={15} />{t("Request telemetry")}</button> : null}
+          <button aria-current={section === "account" ? "page" : undefined} className={section === "account" ? "active" : ""} onClick={() => setSection("account")}><KeyRound size={15} />{t("Account")}</button>
+          <button aria-current={section === "general" ? "page" : undefined} className={section === "general" ? "active" : ""} onClick={() => setSection("general")}><Settings2 size={15} />{t("General")}</button>
         </nav>
         {section === "connections" && canReadSettings ? <ConnectionSettings canWrite={canWriteSettings} onToast={onToast} /> : null}
         {section === "telemetry" && canReadSettings ? <TelemetrySettings canWrite={canWriteSettings} onToast={onToast} /> : null}
@@ -308,7 +308,7 @@ function TelemetrySettings({ canWrite, onToast }: { canWrite: boolean; onToast: 
     {error ? <div className="login-error" role="alert">{error}</div> : null}
     <ResizableGrid className="telemetry-token-list" storageKey="telemetry-tokens" columns={tokenColumns} headerClassName="telemetry-token-head">
       {tokens.map((token) => <div className="telemetry-token-row" key={token.id}>
-        <strong>{token.name}</strong><code>{token.prefix}…</code><span>{token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString(locale, { hour12: false }) : t("Never")}</span>{canWrite ? <button type="button" className={token.enabled ? "status-pill active" : "status-pill"} disabled={busy === token.id} onClick={() => void update(token, !token.enabled)}>{token.enabled ? t("Enabled") : t("Disabled")}</button> : <span>{token.enabled ? t("Enabled") : t("Disabled")}</span>}{canWrite ? <button type="button" className="icon-danger" aria-label={t("Delete telemetry token")} disabled={busy === token.id} onClick={() => void remove(token)}><Trash2 size={14} /></button> : <span>—</span>}
+        <strong data-label={t("Name")}>{token.name}</strong><code data-label={t("Token prefix")}>{token.prefix}…</code><span data-label={t("Last used")}>{token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString(locale, { hour12: false }) : t("Never")}</span>{canWrite ? <button type="button" className={token.enabled ? "status-pill active" : "status-pill"} data-label={t("Status")} disabled={busy === token.id} onClick={() => void update(token, !token.enabled)}>{token.enabled ? t("Enabled") : t("Disabled")}</button> : <span data-label={t("Status")}>{token.enabled ? t("Enabled") : t("Disabled")}</span>}{canWrite ? <button type="button" className="icon-danger" aria-label={t("Delete telemetry token")} disabled={busy === token.id} onClick={() => void remove(token)}><Trash2 size={14} /></button> : <span>—</span>}
       </div>)}
       {!loading && !tokens.length ? <div className="panel-empty">{t("No telemetry tokens.")}</div> : null}
       {loading ? <div className="panel-empty">{t("Loading…")}</div> : null}

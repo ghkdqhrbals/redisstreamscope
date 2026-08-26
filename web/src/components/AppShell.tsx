@@ -18,7 +18,7 @@ import {
   UserRoundCog,
   X,
 } from "lucide-react";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Page, RedisConnection, StreamItem } from "../types";
 import { LanguageSelect, useI18n } from "../i18n";
@@ -26,6 +26,8 @@ import { readMigratedStorage } from "../storage";
 
 const SIDEBAR_STORAGE_KEY = "redisstreamscope:sidebar-collapsed:v1";
 const LEGACY_SIDEBAR_STORAGE_KEY = "streamscope:sidebar-collapsed:v1";
+const MOBILE_NAV_QUERY = "(max-width: 900px)";
+const OPEN_STREAM_CATALOG_EVENT = "redisstreamscope:open-stream-catalog";
 
 type AppShellProps = {
   page: Page;
@@ -34,7 +36,6 @@ type AppShellProps = {
   permissions: string[];
   mobileNav: boolean;
   selectedStreamConnectionId: string;
-  selectedStreamKey: string;
   onNavigate: (page: Page) => void;
   onSelectStream: (target: { connectionId: string; key: string }) => void;
   onToggleNav: () => void;
@@ -63,7 +64,6 @@ export function AppShell({
   permissions,
   mobileNav,
   selectedStreamConnectionId,
-  selectedStreamKey,
   onNavigate,
   onSelectStream,
   onToggleNav,
@@ -73,16 +73,19 @@ export function AppShell({
   const { locale, t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
   const [streams, setStreams] = useState<NavigationStream[]>([]);
-  const [streamFilter, setStreamFilter] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readMigratedStorage(window.localStorage, SIDEBAR_STORAGE_KEY, LEGACY_SIDEBAR_STORAGE_KEY) === "true",
   );
+  const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia(MOBILE_NAV_QUERY).matches);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const mobileMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
+  const previousMobileNavRef = useRef(mobileNav);
+  const skipMobileTriggerFocusRef = useRef(false);
   const connectionLoadSequence = useRef(0);
-  const deferredStreamFilter = useDeferredValue(streamFilter.trim().toLowerCase());
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
   const can = (action: string) => permissions.includes("*") || permissions.includes(action);
   const canOpenAccessControl = role === "admin";
@@ -94,9 +97,6 @@ export function AppShell({
     return true;
   };
   const connection = connections.find((item) => item.id === selectedStreamConnectionId) ?? connections[0] ?? null;
-  const visibleStreams = deferredStreamFilter
-    ? streams.filter((stream) => `${stream.key} ${stream.connectionName} ${stream.connectionId}`.toLowerCase().includes(deferredStreamFilter))
-    : streams;
   const visibleNavigation = navigation.filter((item) =>
     canOpenPage(item.id)
     && (!normalizedCommandQuery || `${t(item.label)} ${item.label} ${item.id}`.toLowerCase().includes(normalizedCommandQuery)),
@@ -149,11 +149,16 @@ export function AppShell({
       if (event.key === "Escape") {
         setCommandOpen(false);
         setProfileOpen(false);
+        if (mobileNav) {
+          event.preventDefault();
+          mobileMenuTriggerRef.current?.focus();
+          onToggleNav();
+        }
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, []);
+  }, [mobileNav, onToggleNav]);
 
   useEffect(() => {
     if (!commandOpen) return;
@@ -165,16 +170,64 @@ export function AppShell({
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(MOBILE_NAV_QUERY);
+    const handleViewportChange = (event: MediaQueryListEvent) => setIsMobileViewport(event.matches);
+    setIsMobileViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleViewportChange);
+    return () => mediaQuery.removeEventListener("change", handleViewportChange);
+  }, []);
+
+  useEffect(() => {
+    const wasOpen = previousMobileNavRef.current;
+    previousMobileNavRef.current = mobileNav;
+    if (!isMobileViewport || wasOpen === mobileNav) return;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (mobileNav) {
+        mobileMenuCloseRef.current?.focus();
+        return;
+      }
+      if (skipMobileTriggerFocusRef.current) {
+        skipMobileTriggerFocusRef.current = false;
+        return;
+      }
+      mobileMenuTriggerRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [isMobileViewport, mobileNav]);
+
+  const openCommandFromMobileNav = () => {
+    setCommandOpen(true);
+    setProfileOpen(false);
+    if (mobileNav) {
+      skipMobileTriggerFocusRef.current = true;
+      onToggleNav();
+    }
+  };
+
+  const closeMobileNav = () => {
+    mobileMenuTriggerRef.current?.focus();
+    onToggleNav();
+  };
+
   const navigate = (nextPage: Page) => {
+    if (nextPage === "streams") {
+      onSelectStream({ connectionId: selectedStreamConnectionId || connection?.id || "", key: "" });
+      window.dispatchEvent(new Event(OPEN_STREAM_CATALOG_EVENT));
+    }
     onNavigate(nextPage);
     setCommandOpen(false);
     setProfileOpen(false);
-    if (mobileNav) onToggleNav();
+    if (mobileNav) closeMobileNav();
   };
 
   const selectStream = (stream: NavigationStream) => {
     onSelectStream({ connectionId: stream.connectionId, key: stream.key });
-    navigate("streams");
+    onNavigate("streams");
+    setCommandOpen(false);
+    setProfileOpen(false);
+    if (mobileNav) closeMobileNav();
   };
 
   const runFirstCommand = () => {
@@ -190,7 +243,14 @@ export function AppShell({
   return (
     <div className={`app-shell ${sidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
       <header className="topbar">
-        <button className="mobile-menu" onClick={() => { setSidebarCollapsed(false); onToggleNav(); }} aria-label={t("Open menu")}>
+        <button
+          ref={mobileMenuTriggerRef}
+          className="mobile-menu"
+          onClick={() => { setSidebarCollapsed(false); onToggleNav(); }}
+          aria-label={mobileNav ? t("Close menu") : t("Open menu")}
+          aria-controls="app-navigation"
+          aria-expanded={mobileNav}
+        >
           <Menu size={20} />
         </button>
         <button className="sidebar-toggle" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? t("Open navigation") : t("Close navigation")} title={sidebarCollapsed ? t("Open navigation") : t("Close navigation")}>
@@ -230,56 +290,35 @@ export function AppShell({
         </div>
       </header>
 
-      <aside className={`sidebar ${mobileNav ? "sidebar--open" : ""}`} aria-hidden={sidebarCollapsed} inert={sidebarCollapsed}>
+      <aside
+        id="app-navigation"
+        className={`sidebar ${mobileNav ? "sidebar--open" : ""}`}
+        aria-hidden={sidebarCollapsed || (isMobileViewport && !mobileNav)}
+        inert={sidebarCollapsed || (isMobileViewport && !mobileNav)}
+      >
         <div className="mobile-sidebar-head">
           <span>{t("Navigation")}</span>
-          <button onClick={onToggleNav} aria-label={t("Close menu")}><X size={18} /></button>
+          <button ref={mobileMenuCloseRef} onClick={closeMobileNav} aria-label={t("Close menu")}><X size={18} /></button>
         </div>
         <nav aria-label={t("Main navigation")}>
+          {isMobileViewport ? <button onClick={openCommandFromMobileNav}>
+            <Search size={16} />
+            <span>{t("Search / Command")}</span>
+          </button> : null}
           {navigation.filter((item) => canOpenPage(item.id)).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               className={page === id ? "active" : ""}
-              onClick={() => {
-                onNavigate(id);
-                if (mobileNav) onToggleNav();
-              }}
+              onClick={() => navigate(id)}
             >
               <Icon size={16} />
               <span>{t(label)}</span>
             </button>
           ))}
         </nav>
-        {page === "overview" || page === "streams" ? <div className="stream-nav">
-          <div className="nav-section-title"><span>STREAMS</span></div>
-          <label className="nav-filter"><Search size={13} /><input value={streamFilter} onChange={(event) => setStreamFilter(event.target.value)} placeholder={t("Filter streams…")} aria-label={t("Filter streams")} />{streamFilter ? <button type="button" onClick={() => setStreamFilter("")} aria-label={t("Clear filter")}><X size={13} /></button> : null}</label>
-          {connections.map((item) => {
-            const connectionStreams = visibleStreams.filter((stream) => stream.connectionId === item.id);
-            if (!connectionStreams.length) return null;
-            return <div key={item.id}>
-              {connections.length > 1 ? <div className="nav-section-title"><span>{item.name}</span></div> : null}
-              {connectionStreams.map((stream) => (
-                <button
-                  key={`${stream.connectionId}:${stream.key}`}
-                  className={page === "streams" && stream.connectionId === selectedStreamConnectionId && stream.key === selectedStreamKey ? "stream-link selected" : "stream-link"}
-                  onClick={() => selectStream(stream)}
-                >
-                  <span>{stream.key}</span>
-                  <em>{stream.length.toLocaleString(locale)}</em>
-                </button>
-              ))}
-            </div>;
-          })}
-          {!visibleStreams.length ? <div className="nav-empty">{streams.length ? t("No streams match this filter.") : t("No streams to display.")}</div> : null}
-        </div> : null}
-        <div className="connection-health">
-          <div><span><i className={connection?.healthy ? "health-dot" : "health-dot health-dot--down"} />{connection?.healthy ? t("Connection healthy") : t("Connection unavailable")}</span><Activity size={15} /></div>
-          <p>{connection?.mode ?? "Redis"} <b>·</b> {connection ? `${connection.latencyMs.toFixed(1)} ms` : "—"}</p>
-          <p>TLS <b>{connection?.tls ? t("enabled") : t("disabled")}</b></p>
-        </div>
       </aside>
 
-      {mobileNav ? <button className="nav-scrim" onClick={onToggleNav} aria-label={t("Close menu")} /> : null}
+      {mobileNav ? <button className="nav-scrim" onClick={closeMobileNav} aria-label={t("Close menu")} /> : null}
       <main className="workspace">{children}</main>
       {commandOpen ? <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}>
         <section className="command-palette" role="dialog" aria-modal="true" aria-label={t("Search and command")} onMouseDown={(event) => event.stopPropagation()}>

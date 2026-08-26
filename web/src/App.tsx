@@ -147,7 +147,6 @@ export function App() {
         permissions={permissions}
         mobileNav={mobileNav}
         selectedStreamConnectionId={selectedStreamConnectionId}
-        selectedStreamKey={selectedStreamKey}
         onNavigate={(nextPage) => {
           if (nextPage !== "streams") {
             setStreamFocus(null);

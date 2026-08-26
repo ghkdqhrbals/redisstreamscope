@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, Gauge, ListChecks, RefreshCw, UsersRound } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, Gauge, HardDrive, ListChecks, RefreshCw, UsersRound } from "lucide-react";
 import { api } from "../api";
 import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
 import { OperationalHealthPanel } from "../components/OperationalHealthPanel";
@@ -117,13 +117,23 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
   const totals = useMemo(() => {
     let availableStreams = 0;
     let entries = 0;
+    let memoryBytes = 0;
+    let memorySampleCount = 0;
+    let memoryKnown = true;
     let consumerGroups = 0;
     let totalLag = 0;
     let pending = 0;
     let lagKnown = true;
     let lastConsumed = "";
     for (const stream of streams) {
-      if (stream.available) availableStreams += 1;
+      if (stream.available) {
+        availableStreams += 1;
+        if (stream.memoryBytes === null) memoryKnown = false;
+        else {
+          memoryBytes += stream.memoryBytes;
+          memorySampleCount += 1;
+        }
+      }
       entries += stream.length;
       consumerGroups += stream.consumerGroups;
       totalLag += stream.totalLag;
@@ -131,11 +141,12 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
       if (!stream.lagKnown) lagKnown = false;
       if (compareStreamIds(stream.lastConsumed, lastConsumed) > 0) lastConsumed = stream.lastConsumed;
     }
-    return { availableStreams, entries, consumerGroups, totalLag, pending, lagKnown, lastConsumed };
+    return { availableStreams, entries, memoryBytes, memoryKnown: memoryKnown && memorySampleCount > 0, consumerGroups, totalLag, pending, lagKnown, lastConsumed };
   }, [streams]);
   const streamColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "key", label: t("Key"), defaultWidth: 260, minWidth: 170, grow: true },
     { id: "entries", label: t("Entries"), defaultWidth: 110, minWidth: 85 },
+    { id: "memory", label: t("Memory"), defaultWidth: 120, minWidth: 90 },
     { id: "groups", label: t("Consumer groups"), defaultWidth: 150, minWidth: 120 },
     { id: "lag", label: t("Total lag"), defaultWidth: 115, minWidth: 90 },
     { id: "pending", label: t("Pending"), defaultWidth: 110, minWidth: 85 },
@@ -164,10 +175,11 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
       <div className="overview-metrics">
         <div><span><Database size={15} />{t("Streams")}</span><strong>{totals.availableStreams.toLocaleString(locale)}</strong></div>
         <div><span><Activity size={15} />{t("Entries")}</span><strong>{totals.entries.toLocaleString(locale)}</strong></div>
+        <div title={t("Approximate RAM used by available stream keys.")}><span><HardDrive size={15} />{t("Stream memory")}</span><strong>{totals.memoryKnown ? formatBytes(totals.memoryBytes, locale) : "—"}</strong></div>
         <div><span><UsersRound size={15} />{t("Consumer groups")}</span><strong>{totals.consumerGroups.toLocaleString(locale)}</strong></div>
         <div><span><Gauge size={15} />{t("Total lag")}</span><strong>{totals.lagKnown ? totals.totalLag.toLocaleString(locale) : "—"}</strong></div>
         <div><span><ListChecks size={15} />{t("Pending")}</span><strong>{totals.pending.toLocaleString(locale)}</strong></div>
-        <div><span><Clock3 size={15} />{t("Last consumed")}</span><strong className="mono overview-last-consumed">{totals.lastConsumed || "—"}</strong></div>
+        <div className="overview-last-consumed-card"><span><Clock3 size={15} />{t("Last consumed")}</span><strong className="mono overview-last-consumed">{totals.lastConsumed || "—"}</strong></div>
       </div>
       <section className="metric-history-panel overview-attention-panel">
         <header className="metric-history-header">
@@ -178,13 +190,13 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
         </header>
         {visibleAttentionItems.length ? <ResizableGrid className="overview-stream-table overview-attention-table" storageKey="overview-attention-v2" columns={attentionColumns} headerClassName="overview-stream-head">
           {visibleAttentionItems.map((item) => <div className={`overview-stream-row overview-attention-row attention-${attentionKind(item)}`} key={item.id}>
-            <strong className="mono overview-stream-key" title={`${item.connectionName} / ${item.streamKey}`}>{item.streamKey}{connections.length > 1 ? <em>{item.connectionName}</em> : null}</strong>
-            <span className="mono" title={item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}>{item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}</span>
-            <span>{item.lag === null ? "—" : item.lag.toLocaleString(locale)}</span>
-            <span>{item.pending.toLocaleString(locale)}</span>
-            <span>{formatMilliseconds(item.observedDeliveryAgeMs)}</span>
-            <span>{formatActivity(item.lastActivityAt, locale)}</span>
-            <span><button type="button" className="overview-group-link" onClick={() => onOpenGroups({ connectionId: item.connectionId, key: item.streamKey, groupName: item.groupName || undefined })}>{t("Open")}</button></span>
+            <strong className="mono overview-stream-key" data-label={t("Stream")} title={`${item.connectionName} / ${item.streamKey}`}>{item.streamKey}{connections.length > 1 ? <em>{item.connectionName}</em> : null}</strong>
+            <span className="mono" data-label={t("Consumer group")} title={item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}>{item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}</span>
+            <span data-label={t("Lag")}>{item.lag === null ? "—" : item.lag.toLocaleString(locale)}</span>
+            <span data-label={t("Pending")}>{item.pending.toLocaleString(locale)}</span>
+            <span data-label={t("Observed delivery age")}>{formatMilliseconds(item.observedDeliveryAgeMs)}</span>
+            <span data-label={t("Last activity")}>{formatActivity(item.lastActivityAt, locale)}</span>
+            <span className="overview-card-action"><button type="button" className="overview-group-link" onClick={() => onOpenGroups({ connectionId: item.connectionId, key: item.streamKey, groupName: item.groupName || undefined })}>{t("Open")}</button></span>
           </div>)}
         </ResizableGrid> : <div className="consumer-group-metrics-empty"><CheckCircle2 size={19} /><span>{t("No active lag or pending work")}</span></div>}
       </section>
@@ -231,9 +243,10 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
           <ResizableGrid className="overview-stream-table" storageKey="overview-streams" columns={streamColumns} headerClassName="overview-stream-head">
             {streams.map((stream) => (
               <div className="overview-stream-row" key={`${stream.connectionId}:${stream.key}`}>
-                <strong className="mono overview-stream-key">{stream.key}{!stream.available ? <em>{t("Waiting")}</em> : null}</strong>
-                <span>{stream.length.toLocaleString(locale)}</span>
-                <span>
+                <strong className="mono overview-stream-key" data-label={t("Key")}>{stream.key}{!stream.available ? <em>{t("Waiting")}</em> : null}</strong>
+                <span data-label={t("Entries")}>{stream.length.toLocaleString(locale)}</span>
+                <span data-label={t("Memory")} title={t("Approximate RAM used by this stream key.")}>{formatBytes(stream.memoryBytes, locale)}</span>
+                <span data-label={t("Consumer groups")}>
                   <button
                     type="button"
                     className="overview-group-link"
@@ -243,10 +256,10 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
                     {stream.consumerGroups.toLocaleString(locale)}
                   </button>
                 </span>
-                <span>{stream.lagKnown ? stream.totalLag.toLocaleString(locale) : "—"}</span>
-                <span>{stream.pending.toLocaleString(locale)}</span>
-                <span className="mono">{stream.lastConsumed || "—"}</span>
-                <span>{stream.connectionName}</span>
+                <span data-label={t("Total lag")}>{stream.lagKnown ? stream.totalLag.toLocaleString(locale) : "—"}</span>
+                <span data-label={t("Pending")}>{stream.pending.toLocaleString(locale)}</span>
+                <span className="mono overview-stream-last-consumed" data-label={t("Last consumed")}>{stream.lastConsumed || "—"}</span>
+                <span data-label={t("Connection")}>{stream.connectionName}</span>
               </div>
             ))}
             {!streams.length && !loading ? <div className="panel-empty">{t("No streams match the current pattern.")}</div> : null}
@@ -352,6 +365,17 @@ function formatActivity(value: string | null, locale: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleString(locale, { dateStyle: "short", timeStyle: "medium", hour12: false });
+}
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
+
+function formatBytes(value: number | null | undefined, locale: string) {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return "—";
+  if (value === 0) return "0 B";
+  const unitIndex = Math.min(Math.floor(Math.log(value) / Math.log(1024)), BYTE_UNITS.length - 1);
+  const amount = value / (1024 ** unitIndex);
+  const maximumFractionDigits = unitIndex === 0 || amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(amount)} ${BYTE_UNITS[unitIndex]}`;
 }
 
 function compareStreamIds(left: string, right: string) {

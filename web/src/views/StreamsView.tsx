@@ -26,9 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
-import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
 import { MessageDeliveryPanel } from "../components/MessageDeliveryPanel";
-import { RecoveryCenter } from "../components/RecoveryCenter";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { StreamInsightsPanel } from "../components/StreamInsightsPanel";
 import { useI18n } from "../i18n";
@@ -46,12 +44,18 @@ type StreamsViewProps = {
 };
 
 type MessageSortKey = "id" | "timestamp" | "size" | "fields";
+type StreamDepth = "catalog" | "stream" | "message" | "group";
+type MessageOrigin = { kind: "messages" } | { kind: "group"; groupName: string };
 const messagePageSize = 100;
+const streamMetricsModeProps = { mode: "stream" as const };
+const groupMetricsModeProps = { mode: "group" as const };
+const OPEN_STREAM_CATALOG_EVENT = "redisstreamscope:open-stream-catalog";
 
 export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focusSection = null, focusGroup = "", canWrite, canManageGroups, onSelectedStreamChange, onToast }: StreamsViewProps) {
   const { locale, t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
   const [connectionId, setConnectionId] = useState("");
+  const [depth, setDepth] = useState<StreamDepth>(selectedStreamKey ? "stream" : "catalog");
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [overviewStreams, setOverviewStreams] = useState<OverviewStreamItem[]>([]);
   const [streamCursor, setStreamCursor] = useState(0);
@@ -68,20 +72,18 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const [inspectedEntry, setInspectedEntry] = useState<RedisEntry | null>(null);
   const [inspectedEntrySourceMissing, setInspectedEntrySourceMissing] = useState(false);
   const [entryInspectorPreferredTab, setEntryInspectorPreferredTab] = useState<"payload" | "delivery">("payload");
+  const [messageOrigin, setMessageOrigin] = useState<MessageOrigin>({ kind: "messages" });
   const [streamQuery, setStreamQuery] = useState("");
   const [search, setSearch] = useState("");
   const [messageSort, setMessageSort] = useState<{ key: MessageSortKey; direction: "asc" | "desc" }>({ key: "id", direction: "desc" });
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"idle" | "connecting" | "live" | "reconnecting">("idle");
   const [paused, setPaused] = useState(false);
-  const [tab, setTab] = useState<"messages" | "groups" | "info">("info");
   const [showAdd, setShowAdd] = useState(false);
   const [showMonitor, setShowMonitor] = useState(false);
   const [streamsSectionOpen, setStreamsSectionOpen] = useState(true);
   const [messagesSectionOpen, setMessagesSectionOpen] = useState(true);
   const [groupsSectionOpen, setGroupsSectionOpen] = useState(true);
-  const [recoverySectionOpen, setRecoverySectionOpen] = useState(false);
-  const [recoveryRefreshRevision, setRecoveryRefreshRevision] = useState(0);
   const [insightsSectionOpen, setInsightsSectionOpen] = useState(false);
   const [streamMutation, setStreamMutation] = useState("");
   const [selectedGroupName, setSelectedGroupName] = useState("");
@@ -92,12 +94,23 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const [entryPageLoading, setEntryPageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const messagesSectionRef = useRef<HTMLElement>(null);
   const groupsSectionRef = useRef<HTMLElement>(null);
+  const streamMainRef = useRef<HTMLElement>(null);
+  const selectedStreamKeyRef = useRef(selectedStreamKey);
+  const discoveryLoadSequence = useRef(0);
+  const streamContentLoadSequence = useRef(0);
+  const streamSelectionSequence = useRef(0);
+  const entryPageLoadSequence = useRef(0);
+  const entryInspectSequence = useRef(0);
+  const groupDetailLoadSequence = useRef(0);
   const deferredStreamQuery = useDeferredValue(streamQuery.trim().toLowerCase());
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
+  selectedStreamKeyRef.current = selectedStreamKey;
   const streamColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "key", label: t("Stream key"), defaultWidth: 260, minWidth: 180, grow: true },
     { id: "entries", label: t("Entries"), defaultWidth: 100, minWidth: 80 },
+    { id: "memory", label: t("Memory"), defaultWidth: 120, minWidth: 90 },
     { id: "groups", label: t("Consumer groups"), defaultWidth: 145, minWidth: 115 },
     { id: "lag", label: t("Total lag"), defaultWidth: 105, minWidth: 85 },
     { id: "pending", label: t("Pending"), defaultWidth: 100, minWidth: 80 },
@@ -112,23 +125,32 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     { id: "fields", label: t("Fields"), defaultWidth: 90, minWidth: 80 },
   ], [t]);
   const loadEntriesAndGroups = useCallback(async (nextConnectionId: string, nextKey: string) => {
+    const requestID = ++streamContentLoadSequence.current;
+    entryPageLoadSequence.current += 1;
+    entryInspectSequence.current += 1;
+    groupDetailLoadSequence.current += 1;
+    setEntries([]);
+    setEntryCursor("");
+    setEntryPageCursor("+");
+    setEntryCursorHistory([]);
+    setHasMoreEntries(false);
+    setGroups([]);
+    setGroupError("");
+    setGroupConsumers([]);
+    setGroupPending([]);
+    setGroupDetailLoading(false);
+    setEntryPageLoading(false);
+    setSelectedId("");
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
     if (!nextConnectionId || !nextKey) {
-      setEntries([]);
-      setEntryCursor("");
-      setEntryPageCursor("+");
-      setEntryCursorHistory([]);
-      setHasMoreEntries(false);
-      setGroups([]);
-      setGroupError("");
-      setInspectedEntry(null);
-      setInspectedEntrySourceMissing(false);
       return;
     }
-    setGroupError("");
     const [entryResult, groupResult] = await Promise.allSettled([
       api.entries(nextConnectionId, nextKey, messagePageSize),
       api.groups(nextConnectionId, nextKey),
     ]);
+    if (requestID !== streamContentLoadSequence.current) return;
     if (groupResult.status === "fulfilled") {
       setGroups(groupResult.value.items);
     } else {
@@ -149,10 +171,16 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
 
   const refreshDeliveryContext = useCallback(async () => {
     if (!connectionId || !key) return;
-    const [groupResult, overviewResult] = await Promise.allSettled([
+    const contentRequestID = streamContentLoadSequence.current;
+    const detailGroupName = selectedGroupName;
+    const detailRequestID = detailGroupName ? ++groupDetailLoadSequence.current : 0;
+    const [groupResult, overviewResult, consumerResult, pendingResult] = await Promise.allSettled([
       api.groups(connectionId, key),
       api.overview(connectionId),
+      detailGroupName ? api.consumers(connectionId, key, detailGroupName) : Promise.resolve({ items: [] }),
+      detailGroupName ? api.pending(connectionId, key, detailGroupName) : Promise.resolve({ items: [] }),
     ]);
+    if (contentRequestID !== streamContentLoadSequence.current) return;
     if (groupResult.status === "fulfilled") {
       setGroups(groupResult.value.items);
       setGroupError("");
@@ -170,50 +198,20 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
         redisType: current.redisType,
       } : stream));
     }
-    setRecoveryRefreshRevision((current) => current + 1);
-  }, [connectionId, key, t]);
-
-  const refreshRecoveryContext = useCallback(async () => {
-    if (!connectionId || !key) return;
-    const [entryResult, groupResult, overviewResult] = await Promise.allSettled([
-      api.entries(connectionId, key, messagePageSize, entryPageCursor),
-      api.groups(connectionId, key),
-      api.overview(connectionId),
-    ]);
-    if (entryResult.status === "fulfilled") {
-      const preservedEntry = selectedId
-        ? inspectedEntry ?? entries.find((entry) => entry.id === selectedId) ?? null
-        : null;
-      setEntries(entryResult.value.items);
-      setEntryCursor(entryResult.value.nextCursor);
-      setHasMoreEntries(entryResult.value.hasMore);
-      if (preservedEntry && !entryResult.value.items.some((entry) => entry.id === preservedEntry.id)) setInspectedEntry(preservedEntry);
+    if (detailGroupName && detailRequestID === groupDetailLoadSequence.current) {
+      setGroupConsumers(consumerResult.status === "fulfilled" ? consumerResult.value.items : []);
+      setGroupPending(pendingResult.status === "fulfilled" ? pendingResult.value.items : []);
     }
-    if (groupResult.status === "fulfilled") {
-      setGroups(groupResult.value.items);
-      setGroupError("");
-    } else {
-      setGroupError(groupResult.reason instanceof Error ? t(groupResult.reason.message) : t("Unable to load consumer details."));
-    }
-    if (overviewResult.status === "fulfilled") {
-      setOverviewStreams(overviewResult.value.items);
-      const current = overviewResult.value.items.find((stream) => stream.key === key);
-      if (current) setStreams((items) => items.map((stream) => stream.key === key ? {
-        ...stream,
-        length: current.length,
-        monitored: current.monitored,
-        available: current.available,
-        redisType: current.redisType,
-      } : stream));
-    }
-    setRecoveryRefreshRevision((current) => current + 1);
-  }, [connectionId, entries, entryPageCursor, inspectedEntry, key, selectedId, t]);
+  }, [connectionId, key, selectedGroupName, t]);
 
   const load = useCallback(async () => {
+    const requestID = ++discoveryLoadSequence.current;
+    const selectionID = ++streamSelectionSequence.current;
     setLoading(true);
     setError("");
     try {
       const connectionResponse = await api.connections();
+      if (requestID !== discoveryLoadSequence.current || selectionID !== streamSelectionSequence.current) return;
       setConnections(connectionResponse.items);
       const nextConnectionId = selectedConnectionId || connectionId || connectionResponse.items[0]?.id || "";
       setConnectionId(nextConnectionId);
@@ -227,19 +225,24 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
         api.streams(nextConnectionId),
         api.overview(nextConnectionId),
       ]);
+      if (requestID !== discoveryLoadSequence.current || selectionID !== streamSelectionSequence.current) return;
       setStreams(streamResponse.items);
       setOverviewStreams(overviewResponse.items);
       setStreamCursor(streamResponse.nextCursor);
       setHasMoreStreams(streamResponse.hasMore);
-      const preferredKey = selectedStreamKey || key;
-      const nextKey = streamResponse.items.some((stream) => stream.key === preferredKey) ? preferredKey : streamResponse.items[0]?.key || "";
+      const preferredKey = selectedStreamKeyRef.current || key;
+      const nextKey = preferredKey && streamResponse.items.some((stream) => stream.key === preferredKey) ? preferredKey : "";
       setKey(nextKey);
+      setDepth(nextKey ? "stream" : "catalog");
       onSelectedStreamChange({ connectionId: nextConnectionId, key: nextKey });
-      await loadEntriesAndGroups(nextConnectionId, nextKey);
+      if (nextKey) await loadEntriesAndGroups(nextConnectionId, nextKey);
+      else await loadEntriesAndGroups(nextConnectionId, "");
     } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to load stream data."));
+      if (requestID === discoveryLoadSequence.current && selectionID === streamSelectionSequence.current) {
+        setError(cause instanceof Error ? t(cause.message) : t("Unable to load stream data."));
+      }
     } finally {
-      setLoading(false);
+      if (requestID === discoveryLoadSequence.current && selectionID === streamSelectionSequence.current) setLoading(false);
     }
   }, [connectionId, key, loadEntriesAndGroups, onSelectedStreamChange, selectedConnectionId, selectedStreamKey, t]);
 
@@ -273,32 +276,99 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   }, [connectionId, isFirstEntryPage, key, live, paused]);
 
   const changeStream = async (nextKey: string) => {
+    discoveryLoadSequence.current += 1;
+    const selectionID = ++streamSelectionSequence.current;
     setKey(nextKey);
+    setDepth(nextKey ? "stream" : "catalog");
     onSelectedStreamChange({ connectionId, key: nextKey });
     setSelectedGroupName("");
-    setTab("info");
+    setMessageOrigin({ kind: "messages" });
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
     setLoading(true);
+    setError("");
     try {
       await loadEntriesAndGroups(connectionId, nextKey);
     } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to load the stream."));
+      if (selectionID === streamSelectionSequence.current) setError(cause instanceof Error ? t(cause.message) : t("Unable to load the stream."));
     } finally {
-      setLoading(false);
+      if (selectionID === streamSelectionSequence.current) setLoading(false);
+    }
+  };
+
+  const openCatalog = useCallback(() => {
+    discoveryLoadSequence.current += 1;
+    streamSelectionSequence.current += 1;
+    streamContentLoadSequence.current += 1;
+    entryPageLoadSequence.current += 1;
+    entryInspectSequence.current += 1;
+    groupDetailLoadSequence.current += 1;
+    setDepth("catalog");
+    setKey("");
+    setEntries([]);
+    setEntryCursor("");
+    setEntryPageCursor("+");
+    setEntryCursorHistory([]);
+    setHasMoreEntries(false);
+    setGroups([]);
+    setGroupError("");
+    setGroupConsumers([]);
+    setGroupPending([]);
+    setGroupDetailLoading(false);
+    setEntryPageLoading(false);
+    setSelectedGroupName("");
+    setSelectedId("");
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
+    setMessageOrigin({ kind: "messages" });
+    setError("");
+    setLoading(false);
+    onSelectedStreamChange({ connectionId, key: "" });
+  }, [connectionId, onSelectedStreamChange]);
+
+  useEffect(() => {
+    window.addEventListener(OPEN_STREAM_CATALOG_EVENT, openCatalog);
+    return () => window.removeEventListener(OPEN_STREAM_CATALOG_EVENT, openCatalog);
+  }, [openCatalog]);
+
+  const openStreamDepth = (section?: "messages" | "groups") => {
+    if (!key) {
+      openCatalog();
+      return;
+    }
+    setDepth("stream");
+    groupDetailLoadSequence.current += 1;
+    setSelectedGroupName("");
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
+    if (section === "messages") setMessagesSectionOpen(true);
+    if (section === "groups") setGroupsSectionOpen(true);
+    if (section) {
+      window.requestAnimationFrame(() => {
+        const target = section === "messages" ? messagesSectionRef.current : groupsSectionRef.current;
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     }
   };
 
   useEffect(() => {
-    if (!selectedStreamKey || selectedStreamKey === key || !connectionId || !streams.some((stream) => stream.key === selectedStreamKey)) return;
+    if (!connectionId) return;
+    if (!selectedStreamKey) {
+      if (key) openCatalog();
+      else setDepth("catalog");
+      return;
+    }
+    if (selectedStreamKey === key || !streams.some((stream) => stream.key === selectedStreamKey)) return;
     void changeStream(selectedStreamKey);
   }, [selectedStreamKey]);
 
   useEffect(() => {
-    if (focusSection !== "groups" || loading) return;
-    setMessagesSectionOpen(false);
-    setGroupsSectionOpen(true);
-    const frame = window.requestAnimationFrame(() => groupsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    const frame = window.requestAnimationFrame(() => {
+      streamMainRef.current?.scrollTo({ top: 0, left: 0 });
+      streamMainRef.current?.querySelector<HTMLElement>("[data-depth-heading]")?.focus({ preventScroll: true });
+    });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusSection, key, loading]);
+  }, [depth]);
 
   const filteredEntries = useMemo(() => {
     if (!deferredSearch) return entries;
@@ -326,41 +396,47 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     : selectedIndex >= 0 ? displayedEntries[selectedIndex] : null;
   const selectedStream = streams.find((stream) => stream.key === key);
   const selectedGroup = groups.find((group) => group.name === selectedGroupName) ?? null;
-  const showEntryInspector = tab === "messages" && selectedEntry;
-  const showGroupInspector = tab === "groups" && selectedGroup;
   const liveLabel = paused ? t("Paused") : liveStatus === "connecting" ? t("Connecting…") : liveStatus === "reconnecting" ? t("Reconnecting…") : liveStatus === "live" ? t("Listening") : t("Stopped");
 
+  useEffect(() => {
+    if (depth !== "group" || groupDetailLoading || !selectedGroupName || selectedGroup) return;
+    openStreamDepth("groups");
+  }, [depth, groupDetailLoading, selectedGroup, selectedGroupName]);
+
   const moveSelection = (step: number) => {
-    if (!displayedEntries.length) return;
+    if (!displayedEntries.length || selectedIndex < 0) return;
     const next = Math.min(displayedEntries.length - 1, Math.max(0, selectedIndex + step));
-    setInspectedEntry(null);
+    entryInspectSequence.current += 1;
+    setInspectedEntry(displayedEntries[next]);
     setInspectedEntrySourceMissing(false);
     setSelectedId(displayedEntries[next].id);
   };
 
-  const inspectRecoveryEntry = async (entryId: string) => {
+  const inspectEntry = async (entryId: string, origin: MessageOrigin, preferredTab: "payload" | "delivery") => {
+    const requestID = ++entryInspectSequence.current;
     const loaded = entries.find((entry) => entry.id === entryId);
     if (loaded) {
-      setInspectedEntry(null);
+      setInspectedEntry(loaded);
       setInspectedEntrySourceMissing(false);
-      setEntryInspectorPreferredTab("delivery");
+      setEntryInspectorPreferredTab(preferredTab);
+      setMessageOrigin(origin);
       setSelectedId(entryId);
-      setTab("messages");
-      setMessagesSectionOpen(true);
+      setDepth("message");
       return;
     }
     setError("");
     try {
       const response = await api.entries(connectionId, key, 1, entryId);
+      if (requestID !== entryInspectSequence.current) return;
       const entry = response.items.find((item) => item.id === entryId);
       setInspectedEntry(entry ?? { id: entryId, timestamp: streamIDTimestamp(entryId), fields: {} });
       setInspectedEntrySourceMissing(!entry);
-      setEntryInspectorPreferredTab("delivery");
+      setEntryInspectorPreferredTab(preferredTab);
+      setMessageOrigin(origin);
       setSelectedId(entryId);
-      setTab("messages");
-      setMessagesSectionOpen(true);
+      setDepth("message");
     } catch (cause) {
-      onToast({ kind: "error", title: t("Unable to open message"), message: cause instanceof Error ? t(cause.message) : t("Unable to load the message.") });
+      if (requestID === entryInspectSequence.current) onToast({ kind: "error", title: t("Unable to open message"), message: cause instanceof Error ? t(cause.message) : t("Unable to load the message.") });
     }
   };
 
@@ -395,12 +471,14 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
 
   const loadEntryPage = async (cursor: string, history: string[]) => {
     if (!connectionId || !key || entryPageLoading) return false;
+    const requestID = ++entryPageLoadSequence.current;
     setEntryPageLoading(true);
     setError("");
     setLive(false);
     setPaused(false);
     try {
       const response = await api.entries(connectionId, key, messagePageSize, cursor);
+      if (requestID !== entryPageLoadSequence.current) return false;
       setEntries(response.items);
       setEntryCursor(response.nextCursor);
       setEntryPageCursor(cursor);
@@ -409,10 +487,10 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setSelectedId("");
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to load the message page."));
+      if (requestID === entryPageLoadSequence.current) setError(cause instanceof Error ? t(cause.message) : t("Unable to load the message page."));
       return false;
     } finally {
-      setEntryPageLoading(false);
+      if (requestID === entryPageLoadSequence.current) setEntryPageLoading(false);
     }
   };
 
@@ -478,8 +556,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setStreamCursor(response.nextCursor);
       setHasMoreStreams(response.hasMore);
       if (streamKey === key && !response.items.some((stream) => stream.key === streamKey)) {
-        const nextKey = response.items.find((stream) => stream.available)?.key ?? "";
-        await changeStream(nextKey);
+        openCatalog();
       }
       window.dispatchEvent(new Event("redisstreamscope:streams-changed"));
       onToast({
@@ -495,8 +572,11 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   };
 
   const openGroup = async (groupName: string) => {
-    setTab("groups");
+    const requestID = ++groupDetailLoadSequence.current;
+    setDepth("group");
     setSelectedGroupName(groupName);
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
     setGroupConsumers([]);
     setGroupPending([]);
     setGroupDetailLoading(true);
@@ -506,204 +586,293 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
         api.consumers(connectionId, key, groupName),
         api.pending(connectionId, key, groupName),
       ]);
+      if (requestID !== groupDetailLoadSequence.current) return;
       setGroupConsumers(consumerResponse.items);
       setGroupPending(pendingResponse.items);
     } catch (cause) {
+      if (requestID !== groupDetailLoadSequence.current) return;
       setGroupConsumers([]);
       setGroupPending([]);
       setError(cause instanceof Error ? t(cause.message) : t("Unable to load consumer details."));
     } finally {
-      setGroupDetailLoading(false);
+      if (requestID === groupDetailLoadSequence.current) setGroupDetailLoading(false);
     }
   };
 
   useEffect(() => {
-    if (focusSection !== "groups" || !focusGroup || loading || !groups.some((group) => group.name === focusGroup)) return;
+    if (focusSection !== "groups" || loading || !key) return;
+    if (focusGroup && groups.some((group) => group.name === focusGroup)) {
+      void openGroup(focusGroup);
+      return;
+    }
     setMessagesSectionOpen(false);
-    setGroupsSectionOpen(true);
-    void openGroup(focusGroup);
+    openStreamDepth("groups");
   }, [focusGroup, focusSection, groups, key, loading]);
 
+  const activeConnection = connections.find((connection) => connection.id === connectionId);
+  const returnFromMessage = () => {
+    if (messageOrigin.kind === "group") {
+      setDepth("group");
+      setSelectedGroupName(messageOrigin.groupName);
+      setInspectedEntry(null);
+      setInspectedEntrySourceMissing(false);
+      return;
+    }
+    openStreamDepth("messages");
+  };
+
   return (
-    <div className={`stream-layout ${showEntryInspector || showGroupInspector ? "" : "stream-layout--wide"}`}>
-      <section className="stream-main">
-        <div className="page-header">
-          <div>
-            <div className="breadcrumbs">{t("Streams")}</div>
-            <h1>{t("Redis Streams")}</h1>
-            <p><i className={connections.find((connection) => connection.id === connectionId)?.healthy ? "health-dot" : "health-dot health-dot--down"} />{connections.find((connection) => connection.id === connectionId)?.name ?? "Redis"}</p>
-          </div>
-          <div className="header-actions">
-            <button onClick={() => void load()} disabled={loading}><RefreshCw size={15} />{loading ? t("Loading…") : t("Refresh")}</button>
-          </div>
-        </div>
-        {error ? <div className="page-error">{error}</div> : null}
-
-        <section className={`stream-catalog ${key ? "stream-catalog--connected" : ""}`}>
-          <header>
-            <button type="button" className="stream-section-toggle" aria-expanded={streamsSectionOpen} onClick={() => setStreamsSectionOpen((current) => !current)}>
-              {streamsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-              <h2>{t("Streams")}</h2>
-            </button>
-            {streamsSectionOpen ? <div className="stream-catalog-actions">
-              <label><Search size={15} /><input value={streamQuery} onChange={(event) => setStreamQuery(event.target.value)} placeholder={t("Filter stream keys…")} /></label>
-              {canWrite ? <button type="button" className="stream-monitor-button" disabled={!connectionId} onClick={() => setShowMonitor(true)}><Plus size={15} />{t("Add stream keys for monitoring")}</button> : null}
-            </div> : <strong className="stream-section-count">{streams.length.toLocaleString(locale)}</strong>}
-          </header>
-          {streamsSectionOpen ? <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog-metrics-v2" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
-            {filteredStreams.map((stream) => {
-              const metrics = overviewByKey.get(stream.key);
-              return <div
-                key={stream.key}
-                className={`stream-catalog-row ${stream.key === key ? "selected" : ""}`}
-              >
-              <button
-                type="button"
-                className="stream-catalog-open"
-                aria-label={`${stream.key} ${stream.length} ${metrics?.consumerGroups ?? 0} ${metrics?.totalLag ?? 0} ${metrics?.pending ?? 0} ${metrics?.lastConsumed || "—"}`}
-                aria-expanded={stream.key === key}
-                onClick={() => void changeStream(stream.key)}
-              />
-              <span className="stream-key-cell mono">
-                <span>{stream.key}</span>
-                {!stream.available ? <em>{t("Waiting")}</em> : null}
-              </span>
-              <span>{(metrics?.length ?? stream.length).toLocaleString(locale)}</span>
-              <span>{(metrics?.consumerGroups ?? 0).toLocaleString(locale)}</span>
-              <span>{metrics ? (metrics.lagKnown ? metrics.totalLag.toLocaleString(locale) : "—") : "—"}</span>
-              <span>{(metrics?.pending ?? 0).toLocaleString(locale)}</span>
-              <span className="mono stream-catalog-last-consumed" title={metrics?.lastConsumed || "—"}>{metrics?.lastConsumed || "—"}</span>
-              <div className="stream-row-actions">
-                {stream.key === key ? <ChevronDown size={17} /> : <ChevronRight size={16} />}
-                {canWrite && stream.monitored ? <button
-                  type="button"
-                  className="stream-unmonitor-button"
-                  disabled={streamMutation === stream.key}
-                  aria-label={t("Remove from monitoring")}
-                  title={t("Remove from monitoring")}
-                  onClick={() => void unmonitorStream(stream.key)}
-                ><Trash2 size={15} /></button>
-                  : null}
-              </div>
-              </div>;
-            })}
-            {!filteredStreams.length && !loading ? <div className="panel-empty">{streams.length ? t("No streams match this filter.") : t("No streams match the current pattern.")}</div> : null}
-            {hasMoreStreams && !streamQuery ? <div className="table-load-more"><button type="button" onClick={() => void loadMoreStreams()} disabled={loadingMoreStreams}>{loadingMoreStreams ? t("Loading more…") : t("Load more")}</button></div> : null}
-          </ResizableGrid> : null}
-        </section>
-
-        {key ? <div className="stream-detail">
-          <div className="stream-detail-heading">
-            <div className="stream-detail-identity"><h2 className="mono">{key}</h2></div>
-            <button onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={14} />{t("Copy key")}</button>
-          </div>
-          <div className="stream-detail-tree">
-          <div className="kpi-strip stream-kpis-real">
-            <div><span>{t("Length")}</span><strong>{selectedStream?.length.toLocaleString(locale) ?? "0"}</strong></div>
-            <div><span>{t("Consumer groups")}</span><strong>{groups.length}</strong></div>
-            <div><span>{t("Loaded entries")}</span><strong>{entries.length}</strong></div>
-            <div><span>{t("Last entry")}</span><strong className="mono small-value">{entries[0]?.id ?? "—"}</strong></div>
-          </div>
-
-          <section className="stream-data-section">
-            <div className="surface-heading stream-section-heading">
-              <button type="button" className="stream-section-toggle" aria-expanded={messagesSectionOpen} onClick={() => setMessagesSectionOpen((current) => !current)}>
-                {messagesSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-                <span><h2>{t("Messages")}</h2></span>
-              </button>
-              {canWrite ? <button type="button" className="stream-section-action" disabled={!key} onClick={() => setShowAdd(true)}><Plus size={15} />{t("Add message")}</button> : null}
-            </div>
-          {messagesSectionOpen ? <>
-          <div className="table-toolbar">
-            <label className="toolbar-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search ID, field or value…")} /></label>
-            <button className={`live-button ${live ? "active" : ""}`} aria-pressed={live} disabled={entryPageLoading} onClick={() => void toggleLiveTail()}><span /><span>{t("Live tail")}</span></button>
-            <button className={paused ? "pause-button active" : "pause-button"} aria-label={paused ? t("Resume live tail") : t("Pause live tail")} onClick={() => setPaused((value) => !value)} disabled={!live}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
-            {live ? <span className={`live-state live-state--${liveStatus}`}><Radio size={12} />{liveLabel}</span> : null}
-          </div>
-          <div className="message-table-scroll">
-            <ResizableGrid
-              className="message-table"
-              storageKey="stream-messages"
-              columns={messageColumns}
-              headerClassName="message-table-head"
-              renderHeader={(column) => {
-                if (column.id === "payload") return column.label;
-                const sortKey = column.id as MessageSortKey;
-                return <button className={messageSort.key === sortKey ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort(sortKey)}>{column.label} <ArrowDownUp size={13} /></button>;
-              }}
-            >
-              <div className="message-table-body">
-              {displayedEntries.map((entry) => <button className={`message-row ${entry.id === selectedId && tab === "messages" ? "selected" : ""}`} key={entry.id} onClick={() => { setInspectedEntry(null); setInspectedEntrySourceMissing(false); setEntryInspectorPreferredTab("payload"); setSelectedId(entry.id); setTab("messages"); }}>
-                <span className="mono id-cell">{entry.id}</span>
-                <span className="mono timestamp-cell">{formatTimestamp(entry.timestamp, locale)}</span>
-                <span className="mono fields-cell">{Object.entries(entry.fields).slice(0, 4).map(([field, value]) => `${field}=${String(value)}`).join("   ")}</span>
-                <span className="mono size-cell">{entrySize(entry)} B</span>
-                <span className="delivery-cell">{Object.keys(entry.fields).length}</span>
-              </button>)}
-              {!displayedEntries.length && !loading ? <div className="empty-table">{key ? t("No entries to display.") : t("No streams match the current pattern.")}</div> : null}
-              </div>
-            </ResizableGrid>
-          </div>
-          <div className="table-footer">
-            <span>{t("Showing {visible} of {total} entries", { visible: displayedEntries.length, total: selectedStream?.length.toLocaleString(locale) ?? 0 })}</span>
+    <div className="stream-layout stream-layout--wide stream-depth-page">
+      <section className="stream-main" ref={streamMainRef}>
+        {depth === "catalog" ? <>
+          <div className="page-header stream-depth-header">
             <div>
-              <span>{t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}</span>
-              <div className="message-pagination">
-                <button type="button" onClick={() => void loadPreviousEntryPage()} disabled={entryPageLoading || !entryCursorHistory.length}><ChevronLeft size={14} />{t("Previous")}</button>
-                <span>{t("Page {page}", { page: entryCursorHistory.length + 1 })}</span>
-                <button type="button" onClick={() => void loadNextEntryPage()} disabled={entryPageLoading || !hasMoreEntries}>{t("Next")}<ChevronRight size={14} /></button>
+              <StreamDepthBreadcrumbs current={t("Streams")} />
+              <h1 data-depth-heading tabIndex={-1}>{t("Redis Streams")}</h1>
+              <p><i className={activeConnection?.healthy ? "health-dot" : "health-dot health-dot--down"} />{activeConnection?.name ?? "Redis"}</p>
+            </div>
+            <div className="header-actions"><button onClick={() => void load()} disabled={loading}><RefreshCw size={15} />{loading ? t("Loading…") : t("Refresh")}</button></div>
+          </div>
+          {error ? <div className="page-error">{error}</div> : null}
+          <section className="stream-catalog">
+            <header>
+              <button type="button" className="stream-section-toggle" aria-expanded={streamsSectionOpen} onClick={() => setStreamsSectionOpen((current) => !current)}>
+                {streamsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+                <h2>{t("Streams")}</h2>
+              </button>
+              {streamsSectionOpen ? <div className="stream-catalog-actions">
+                <label><Search size={15} /><input value={streamQuery} onChange={(event) => setStreamQuery(event.target.value)} placeholder={t("Filter stream keys…")} /></label>
+                {canWrite ? <button type="button" className="stream-monitor-button" disabled={!connectionId} onClick={() => setShowMonitor(true)}><Plus size={15} />{t("Add stream keys for monitoring")}</button> : null}
+              </div> : <strong className="stream-section-count">{streams.length.toLocaleString(locale)}</strong>}
+            </header>
+            {streamsSectionOpen ? <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog-metrics-v2" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
+              {filteredStreams.map((stream) => {
+                const metrics = overviewByKey.get(stream.key);
+                const memory = metrics?.memoryBytes ?? stream.memoryBytes;
+                return <div key={stream.key} className="stream-catalog-row">
+                  <button
+                    type="button"
+                    className="stream-catalog-open"
+                    aria-label={`${t("Stream")}: ${stream.key}; ${t("Entries")}: ${stream.length.toLocaleString(locale)}; ${t("Memory")}: ${formatBytes(memory, locale)}; ${t("Consumer groups")}: ${(metrics?.consumerGroups ?? 0).toLocaleString(locale)}; ${t("Total lag")}: ${metrics?.lagKnown ? metrics.totalLag.toLocaleString(locale) : "—"}; ${t("Pending")}: ${(metrics?.pending ?? 0).toLocaleString(locale)}; ${t("Last consumed")}: ${metrics?.lastConsumed || "—"}`}
+                    onClick={() => void changeStream(stream.key)}
+                  />
+                  <span className="stream-key-cell mono" data-label={t("Stream key")}><span>{stream.key}</span>{!stream.available ? <em>{t("Waiting")}</em> : null}</span>
+                  <span data-label={t("Entries")}>{(metrics?.length ?? stream.length).toLocaleString(locale)}</span>
+                  <span data-label={t("Memory")} title={t("Approximate RAM used by this stream key.")}>{formatBytes(memory, locale)}</span>
+                  <span data-label={t("Consumer groups")}>{(metrics?.consumerGroups ?? 0).toLocaleString(locale)}</span>
+                  <span data-label={t("Total lag")}>{metrics ? (metrics.lagKnown ? metrics.totalLag.toLocaleString(locale) : "—") : "—"}</span>
+                  <span data-label={t("Pending")}>{(metrics?.pending ?? 0).toLocaleString(locale)}</span>
+                  <span className="mono stream-catalog-last-consumed" data-label={t("Last consumed")} title={metrics?.lastConsumed || "—"}>{metrics?.lastConsumed || "—"}</span>
+                  <div className="stream-row-actions">
+                    <ChevronRight size={16} />
+                    {canWrite && stream.monitored ? <button type="button" className="stream-unmonitor-button" disabled={streamMutation === stream.key} aria-label={t("Remove from monitoring")} title={t("Remove from monitoring")} onClick={() => void unmonitorStream(stream.key)}><Trash2 size={15} /></button> : null}
+                  </div>
+                </div>;
+              })}
+              {!filteredStreams.length && !loading ? <div className="panel-empty">{streams.length ? t("No streams match this filter.") : t("No streams match the current pattern.")}</div> : null}
+              {hasMoreStreams && !streamQuery ? <div className="table-load-more"><button type="button" onClick={() => void loadMoreStreams()} disabled={loadingMoreStreams}>{loadingMoreStreams ? t("Loading more…") : t("Load more")}</button></div> : null}
+            </ResizableGrid> : null}
+          </section>
+        </> : null}
+
+        {depth === "stream" && key ? <>
+          <div className="page-header stream-depth-header">
+            <div>
+              <StreamDepthBreadcrumbs items={[{ label: t("Streams"), onClick: openCatalog }]} current={key} />
+              <h1 className="mono" data-depth-heading tabIndex={-1}>{key}</h1>
+              <p><i className={activeConnection?.healthy ? "health-dot" : "health-dot health-dot--down"} />{activeConnection?.name ?? "Redis"}</p>
+            </div>
+            <div className="header-actions">
+              <button className="stream-depth-back" type="button" onClick={openCatalog}><ChevronLeft size={15} />{t("Back")}</button>
+              <button type="button" onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={14} />{t("Copy key")}</button>
+              <button onClick={() => void load()} disabled={loading}><RefreshCw size={15} />{loading ? t("Loading…") : t("Refresh")}</button>
+            </div>
+          </div>
+          {error ? <div className="page-error">{error}</div> : null}
+          <div className="stream-depth-content">
+            <div className="stream-detail">
+              <div className="stream-detail-tree">
+              <div className="kpi-strip stream-kpis-real">
+                <div><span>{t("Entries")}</span><strong>{selectedStream?.length.toLocaleString(locale) ?? "0"}</strong></div>
+                <div title={t("Approximate RAM used by this stream key.")}><span>{t("Memory")}</span><strong>{formatBytes(selectedStream?.memoryBytes, locale)}</strong></div>
+                <div><span>{t("Consumer groups")}</span><strong>{groups.length}</strong></div>
+                <div><span>{t("Last entry")}</span><strong className="mono small-value">{entries[0]?.id ?? "—"}</strong></div>
+              </div>
+
+              <section className="stream-data-section" ref={messagesSectionRef}>
+                <div className="surface-heading stream-section-heading">
+                  <button type="button" className="stream-section-toggle" aria-expanded={messagesSectionOpen} onClick={() => setMessagesSectionOpen((current) => !current)}>
+                    {messagesSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}<span><h2>{t("Messages")}</h2></span>
+                  </button>
+                  {canWrite ? <button type="button" className="stream-section-action" onClick={() => setShowAdd(true)}><Plus size={15} />{t("Add message")}</button> : null}
+                </div>
+                {messagesSectionOpen ? <>
+                  <div className="table-toolbar">
+                    <label className="toolbar-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search ID, field or value…")} /></label>
+                    <label className="mobile-message-sort">
+                      <ArrowDownUp size={14} />
+                      <select
+                        aria-label={t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}
+                        value={`${messageSort.key}:${messageSort.direction}`}
+                        onChange={(event) => {
+                          const [sortKey, direction] = event.target.value.split(":") as [MessageSortKey, "asc" | "desc"];
+                          setMessageSort({ key: sortKey, direction });
+                        }}
+                      >
+                        {(["id", "timestamp", "size", "fields"] as MessageSortKey[]).flatMap((sortKey) => (["desc", "asc"] as const).map((direction) => <option key={`${sortKey}:${direction}`} value={`${sortKey}:${direction}`}>{t(sortKey === "id" ? "ID" : sortKey === "timestamp" ? "Timestamp" : sortKey === "size" ? "Size" : "Fields")} · {t(direction === "asc" ? "ascending" : "descending")}</option>))}
+                      </select>
+                    </label>
+                    <button className={`live-button ${live ? "active" : ""}`} aria-pressed={live} disabled={entryPageLoading} onClick={() => void toggleLiveTail()}><span /><span>{t("Live tail")}</span></button>
+                    <button className={paused ? "pause-button active" : "pause-button"} aria-label={paused ? t("Resume live tail") : t("Pause live tail")} onClick={() => setPaused((value) => !value)} disabled={!live}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
+                    {live ? <span className={`live-state live-state--${liveStatus}`}><Radio size={12} />{liveLabel}</span> : null}
+                  </div>
+                  <div className="message-table-scroll">
+                    <ResizableGrid className="message-table" storageKey="stream-messages" columns={messageColumns} headerClassName="message-table-head" renderHeader={(column) => {
+                      if (column.id === "payload") return column.label;
+                      const sortKey = column.id as MessageSortKey;
+                      return <button className={messageSort.key === sortKey ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort(sortKey)}>{column.label} <ArrowDownUp size={13} /></button>;
+                    }}>
+                      <div className="message-table-body">
+                        {displayedEntries.map((entry) => <button className="message-row" key={entry.id} onClick={() => void inspectEntry(entry.id, { kind: "messages" }, "payload")}>
+                          <span className="mono id-cell" data-label={t("ID")}>{entry.id}</span>
+                          <span className="mono timestamp-cell" data-label={t("Timestamp")}>{formatTimestamp(entry.timestamp, locale)}</span>
+                          <span className="mono fields-cell" data-label={t("Payload preview")}>{Object.entries(entry.fields).slice(0, 4).map(([field, value]) => `${field}=${String(value)}`).join("   ")}</span>
+                          <span className="mono size-cell" data-label={t("Size")}>{entrySize(entry)} B</span>
+                          <span className="delivery-cell" data-label={t("Fields")}>{Object.keys(entry.fields).length}</span>
+                        </button>)}
+                        {!displayedEntries.length && !loading ? <div className="empty-table">{t("No entries to display.")}</div> : null}
+                      </div>
+                    </ResizableGrid>
+                  </div>
+                  <div className="table-footer">
+                    <span>{t("Showing {visible} of {total} entries", { visible: displayedEntries.length, total: selectedStream?.length.toLocaleString(locale) ?? 0 })}</span>
+                    <div>
+                      <span>{t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}</span>
+                      <div className="message-pagination">
+                        <button type="button" onClick={() => void loadPreviousEntryPage()} disabled={entryPageLoading || !entryCursorHistory.length}><ChevronLeft size={14} />{t("Previous")}</button>
+                        <span>{t("Page {page}", { page: entryCursorHistory.length + 1 })}</span>
+                        <button type="button" onClick={() => void loadNextEntryPage()} disabled={entryPageLoading || !hasMoreEntries}>{t("Next")}<ChevronRight size={14} /></button>
+                      </div>
+                    </div>
+                  </div>
+                </> : null}
+              </section>
+
+              <section className="stream-data-section stream-groups-section" ref={groupsSectionRef}>
+                <div className="surface-heading stream-section-heading">
+                  <button type="button" className="stream-section-toggle" aria-expanded={groupsSectionOpen} onClick={() => setGroupsSectionOpen((current) => !current)}>
+                    {groupsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}<span><h2>{t("Consumer groups")}</h2></span>
+                  </button>
+                  <strong className="stream-section-count">{groupError ? "—" : groups.length}</strong>
+                </div>
+                {groupsSectionOpen ? loading ? <div className="panel-empty">{t("Loading…")}</div> : groupError ? <div className="metric-history-error" role="alert">{groupError}</div> : <ConsumerGroupMetricsPanel
+                  {...streamMetricsModeProps}
+                  key={`${connectionId}:${key}`}
+                  connectionId={connectionId}
+                  streamKey={key}
+                  monitored={selectedStream?.monitored ?? false}
+                  groups={groups}
+                  selectedGroupName=""
+                  onOpenGroup={(groupName) => { void openGroup(groupName); }}
+                /> : null}
+              </section>
+
+              <section className="stream-data-section stream-insights-section">
+                <div className="surface-heading stream-section-heading">
+                  <button type="button" className="stream-section-toggle" aria-expanded={insightsSectionOpen} onClick={() => setInsightsSectionOpen((current) => !current)}>
+                    {insightsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}<span><h2>{t("Schema & traces")}</h2></span>
+                  </button>
+                </div>
+                {insightsSectionOpen ? <StreamInsightsPanel connectionId={connectionId} streamKey={key} /> : null}
+              </section>
               </div>
             </div>
           </div>
-          </> : null}
-          </section>
+        </> : null}
 
-          <section className="stream-data-section stream-groups-section" ref={groupsSectionRef}>
-          <div className="surface-heading stream-section-heading">
-            <button type="button" className="stream-section-toggle" aria-expanded={groupsSectionOpen} onClick={() => setGroupsSectionOpen((current) => !current)}>
-              {groupsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-              <span><h2>{t("Consumer groups")}</h2></span>
-            </button>
-            <strong className="stream-section-count">{groupError ? "—" : groups.length}</strong>
+        {depth === "message" && key && selectedEntry ? <>
+          <div className="page-header stream-depth-header">
+            <div>
+              <StreamDepthBreadcrumbs
+                items={messageOrigin.kind === "group"
+                  ? [
+                    { label: t("Streams"), onClick: openCatalog },
+                    { label: key, onClick: () => openStreamDepth() },
+                    { label: t("Consumer groups"), onClick: () => openStreamDepth("groups") },
+                    { label: messageOrigin.groupName, onClick: () => { setDepth("group"); setSelectedGroupName(messageOrigin.groupName); } },
+                  ]
+                  : [
+                    { label: t("Streams"), onClick: openCatalog },
+                    { label: key, onClick: () => openStreamDepth() },
+                    { label: t("Messages"), onClick: () => openStreamDepth("messages") },
+                  ]}
+                current={selectedEntry.id}
+              />
+              <h1 className="mono" data-depth-heading tabIndex={-1}>{selectedEntry.id}</h1>
+            </div>
+            <div className="header-actions">
+              <button className="stream-depth-back" type="button" onClick={returnFromMessage}><ChevronLeft size={15} />{t("Back")}</button>
+              <button type="button" aria-label={t("Previous entry")} onClick={() => moveSelection(-1)} disabled={selectedIndex <= 0}><ChevronLeft size={16} /></button>
+              <button type="button" aria-label={t("Next entry")} onClick={() => moveSelection(1)} disabled={selectedIndex < 0 || selectedIndex >= displayedEntries.length - 1}><ChevronRight size={16} /></button>
+            </div>
           </div>
-          {groupsSectionOpen ? loading ? <div className="panel-empty">{t("Loading…")}</div> : groupError ? <div className="metric-history-error" role="alert">{groupError}</div> : <>
-            <ConsumerGroupMetricsPanel
-              key={`${connectionId}:${key}`}
+          {error ? <div className="page-error">{error}</div> : null}
+          <div className="stream-depth-content">
+            <MessageDepthContent
               connectionId={connectionId}
-              streamKey={key}
-              monitored={selectedStream?.monitored ?? false}
-              groups={groups}
-              selectedGroupName={selectedGroupName}
-              onOpenGroup={(groupName) => { void openGroup(groupName); }}
+              entry={selectedEntry}
+              stream={key}
+              preferredTab={entryInspectorPreferredTab}
+              initialGroupName={messageOrigin.kind === "group" ? messageOrigin.groupName : ""}
+              sourceMissing={inspectedEntrySourceMissing}
+              canManageGroups={canManageGroups}
+              canWriteStreams={canWrite}
+              onChanged={refreshDeliveryContext}
+              onToast={onToast}
             />
-          </> : null}
-          </section>
-
-          <section className="stream-data-section stream-operations-section">
-            <div className="surface-heading stream-section-heading">
-              <button type="button" className="stream-section-toggle" aria-expanded={recoverySectionOpen} onClick={() => setRecoverySectionOpen((current) => !current)}>
-                {recoverySectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-                <span><h2>{t("Pending recovery & DLQ")}</h2></span>
-              </button>
-            </div>
-            {recoverySectionOpen ? <RecoveryCenter connectionId={connectionId} streamKey={key} groups={groups} refreshRevision={recoveryRefreshRevision} canManageGroups={canManageGroups} canWriteStreams={canWrite} onChanged={refreshRecoveryContext} onInspectEntry={(entryId) => { void inspectRecoveryEntry(entryId); }} onToast={onToast} /> : null}
-          </section>
-
-          <section className="stream-data-section stream-insights-section">
-            <div className="surface-heading stream-section-heading">
-              <button type="button" className="stream-section-toggle" aria-expanded={insightsSectionOpen} onClick={() => setInsightsSectionOpen((current) => !current)}>
-                {insightsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-                <span><h2>{t("Schema & traces")}</h2></span>
-              </button>
-            </div>
-            {insightsSectionOpen ? <StreamInsightsPanel connectionId={connectionId} streamKey={key} /> : null}
-          </section>
           </div>
-        </div> : null}
+        </> : null}
+
+        {depth === "group" && key && selectedGroup ? <>
+          <div className="page-header stream-depth-header">
+            <div>
+              <StreamDepthBreadcrumbs items={[
+                { label: t("Streams"), onClick: openCatalog },
+                { label: key, onClick: () => openStreamDepth() },
+                { label: t("Consumer groups"), onClick: () => openStreamDepth("groups") },
+              ]} current={selectedGroup.name} />
+              <h1 className="mono" data-depth-heading tabIndex={-1}>{selectedGroup.name}</h1>
+            </div>
+            <div className="header-actions">
+              <button className="stream-depth-back" type="button" onClick={() => openStreamDepth("groups")}><ChevronLeft size={15} />{t("Back")}</button>
+              <button type="button" onClick={() => void openGroup(selectedGroup.name)} disabled={groupDetailLoading}><RefreshCw size={15} />{groupDetailLoading ? t("Loading…") : t("Refresh")}</button>
+            </div>
+          </div>
+          {error ? <div className="page-error">{error}</div> : null}
+          <div className="stream-depth-content">
+            <div className="consumer-group-depth">
+              <ConsumerGroupMetricsPanel
+                {...groupMetricsModeProps}
+                key={`${connectionId}:${key}:${selectedGroup.name}`}
+                connectionId={connectionId}
+                streamKey={key}
+                monitored={selectedStream?.monitored ?? false}
+                groups={groups}
+                selectedGroupName={selectedGroup.name}
+              />
+              <ConsumerGroupDepthContent
+                group={selectedGroup}
+                stream={key}
+                consumers={groupConsumers}
+                pending={groupPending}
+                loading={groupDetailLoading}
+                onOpenEntry={(entryId) => void inspectEntry(entryId, { kind: "group", groupName: selectedGroup.name }, "delivery")}
+              />
+            </div>
+          </div>
+        </> : null}
       </section>
 
-      {showEntryInspector ? <EntryInspector connectionId={connectionId} entry={showEntryInspector} stream={key} preferredTab={entryInspectorPreferredTab} sourceMissing={inspectedEntrySourceMissing} canManageGroups={canManageGroups} canWriteStreams={canWrite} onChanged={refreshDeliveryContext} onToast={onToast} onClose={() => { setInspectedEntry(null); setInspectedEntrySourceMissing(false); setSelectedId(""); }} onMove={moveSelection} /> : null}
-      {showGroupInspector ? <ConsumerGroupInspector group={showGroupInspector} stream={key} consumers={groupConsumers} pending={groupPending} loading={groupDetailLoading} onClose={() => setSelectedGroupName("")} /> : null}
       {canWrite && showAdd ? <AddMessageModal connectionId={connectionId} stream={key} onClose={() => setShowAdd(false)} onAdded={async (id) => {
         setShowAdd(false);
         await loadEntriesAndGroups(connectionId, key);
@@ -718,41 +887,44 @@ function ConsumerPendingTable({
   pending,
   storageKey,
   firstColumnLabel,
+  onOpenEntry,
 }: {
   pending: PendingEntry[];
   storageKey: string;
   firstColumnLabel: string;
+  onOpenEntry: (entryId: string) => void;
 }) {
   const { t } = useI18n();
   const columns = useMemo<ResizableGridColumn[]>(() => [
     { id: "message", label: firstColumnLabel, defaultWidth: 210, minWidth: 130, grow: true },
     { id: "deliveries", label: t("Deliveries"), defaultWidth: 82, minWidth: 68 },
     { id: "idle", label: t("Idle"), defaultWidth: 82, minWidth: 68 },
+    { id: "open", label: null, ariaLabel: t("Actions"), defaultWidth: 44, minWidth: 44 },
   ], [firstColumnLabel, t]);
   return (
     <ResizableGrid className="consumer-pending-table" storageKey={storageKey} columns={columns} headerClassName="consumer-pending-head">
       <div className="consumer-pending-list">
-        {pending.map((entry) => <div key={entry.id}><strong className="mono">{entry.id}</strong><span>{entry.retryCount}</span><span>{formatDuration(entry.idleMs)}</span></div>)}
+        {pending.map((entry) => <button type="button" className="consumer-pending-row" key={entry.id} onClick={() => onOpenEntry(entry.id)}><strong className="mono">{entry.id}</strong><span data-label={t("Deliveries")}>{entry.retryCount}</span><span data-label={t("Idle")}>{formatDuration(entry.idleMs)}</span><ChevronRight size={15} /></button>)}
         {!pending.length ? <div className="panel-empty">{t("No messages are assigned in the PEL.")}</div> : null}
       </div>
     </ResizableGrid>
   );
 }
 
-function ConsumerGroupInspector({
+function ConsumerGroupDepthContent({
   group,
   stream,
   consumers,
   pending,
   loading,
-  onClose,
+  onOpenEntry,
 }: {
   group: ConsumerGroup;
   stream: string;
   consumers: ConsumerInfo[];
   pending: PendingEntry[];
   loading: boolean;
-  onClose: () => void;
+  onOpenEntry: (entryId: string) => void;
 }) {
   const { t } = useI18n();
   const [selectedConsumer, setSelectedConsumer] = useState("");
@@ -764,9 +936,7 @@ function ConsumerGroupInspector({
   const consumer = consumers.find((item) => item.name === selectedConsumer) ?? null;
   const consumerPending = pending.filter((entry) => entry.consumer === selectedConsumer);
 
-  return <aside className="inspector group-inspector">
-    <InspectorResizeHandle />
-    <header><div><strong>{t("Consumer group")}</strong><span className="mono">{group.name}</span></div><div className="inspector-actions"><button onClick={onClose} aria-label={t("Close consumer group details")}><X size={17} /></button></div></header>
+  return <div className="consumer-group-depth-content">
     <div className="group-inspector-summary">
       <div><span>Stream</span><strong className="mono">{stream}</strong></div>
       <div><span>{t("Consumers")}</span><strong>{group.consumers}</strong></div>
@@ -774,7 +944,13 @@ function ConsumerGroupInspector({
       <div><span>{t("Lag")}</span><strong>{group.lag}</strong></div>
       <div><span>{t("Last delivered")}</span><strong className="mono stream-id-cell" title={group.lastDeliveredId}>{group.lastDeliveredId}</strong></div>
     </div>
-    <section className="consumer-section">
+
+    <section className="consumer-group-depth-section consumer-group-pending-section">
+      <header><h2>{t("Pending messages")}</h2><span>{pending.length}</span></header>
+      {loading ? <div className="panel-empty">{t("Loading pending messages…")}</div> : <ConsumerPendingTable pending={pending} storageKey="stream-group-depth-pending" firstColumnLabel={t("Pending message")} onOpenEntry={onOpenEntry} />}
+    </section>
+
+    <section className="consumer-section consumer-group-depth-section">
       <header><h2>{t("Consumers")}</h2><span>{consumers.length}</span></header>
       {loading ? <div className="panel-empty">{t("Loading consumer activity…")}</div> : null}
       {!loading ? <div className="consumer-list">
@@ -794,39 +970,58 @@ function ConsumerGroupInspector({
         <div><span>{t("Idle")}</span><strong>{formatDuration(consumer.idleMs)}</strong></div>
         <div><span>{t("Inactive")}</span><strong>{formatDuration(consumer.inactiveMs)}</strong></div>
       </div>
-      <ConsumerPendingTable pending={consumerPending} storageKey="stream-group-inspector-pending" firstColumnLabel={t("Assigned message")} />
+      <ConsumerPendingTable pending={consumerPending} storageKey="stream-group-consumer-pending" firstColumnLabel={t("Assigned message")} onOpenEntry={onOpenEntry} />
     </section> : null}
-  </aside>;
+  </div>;
 }
 
-function EntryInspector({ connectionId, entry, stream, preferredTab, sourceMissing, canManageGroups, canWriteStreams, onChanged, onToast, onClose, onMove }: {
+function MessageDepthContent({ connectionId, entry, stream, preferredTab, initialGroupName, sourceMissing, canManageGroups, canWriteStreams, onChanged, onToast }: {
   connectionId: string;
   entry: RedisEntry;
   stream: string;
   preferredTab: "payload" | "delivery";
+  initialGroupName: string;
   sourceMissing: boolean;
   canManageGroups: boolean;
   canWriteStreams: boolean;
   onChanged: () => Promise<void>;
   onToast: (toast: ToastState) => void;
-  onClose: () => void;
-  onMove: (step: number) => void;
 }) {
   const { locale, t } = useI18n();
   const [inspectorTab, setInspectorTab] = useState<"payload" | "delivery">(sourceMissing ? "delivery" : "payload");
   const [wrapLines, setWrapLines] = useState(true);
   const payload = useMemo(() => presentEntryPayload(entry.fields), [entry.fields]);
   useEffect(() => { setInspectorTab(sourceMissing ? "delivery" : preferredTab); }, [entry.id, preferredTab, sourceMissing]);
-  return <aside className="inspector entry-inspector">
-    <InspectorResizeHandle />
-    <header><div><strong>{t("Entry details")}</strong><span className="mono">{entry.id}</span>{sourceMissing ? <em className="source-entry-missing">{t("Source entry unavailable")}</em> : null}</div><div className="inspector-actions"><button onClick={() => onMove(-1)} aria-label={t("Previous entry")}><ChevronLeft size={16} /></button><button onClick={() => onMove(1)} aria-label={t("Next entry")}><ChevronRight size={16} /></button><button onClick={onClose} aria-label={t("Close entry details")}><X size={17} /></button></div></header>
-    <div className="inspector-tabs" role="tablist">{!sourceMissing ? <button type="button" role="tab" aria-selected={inspectorTab === "payload"} className={inspectorTab === "payload" ? "active" : ""} onClick={() => setInspectorTab("payload")}>{t("Payload")}</button> : null}<button type="button" role="tab" aria-selected={inspectorTab === "delivery"} className={inspectorTab === "delivery" ? "active" : ""} onClick={() => setInspectorTab("delivery")}>{t("Delivery")}</button></div>
-    {inspectorTab === "payload" ? <>
+  const moveTab = (direction: -1 | 1) => {
+    const tabs: Array<"payload" | "delivery"> = sourceMissing ? ["delivery"] : ["payload", "delivery"];
+    const currentIndex = Math.max(0, tabs.indexOf(inspectorTab));
+    const nextTab = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+    setInspectorTab(nextTab);
+    window.requestAnimationFrame(() => document.getElementById(`message-depth-${nextTab}-tab`)?.focus());
+  };
+  return <div className="message-depth-surface">
+    {sourceMissing ? <div className="message-depth-source-status"><em className="source-entry-missing">{t("Source entry unavailable")}</em></div> : null}
+    <div className="inspector-tabs message-depth-tabs" role="tablist" aria-label={t("Entry details")} onKeyDown={(event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      moveTab(event.key === "ArrowLeft" ? -1 : 1);
+    }}>{!sourceMissing ? <button id="message-depth-payload-tab" type="button" role="tab" aria-controls="message-depth-payload-panel" aria-selected={inspectorTab === "payload"} tabIndex={inspectorTab === "payload" ? 0 : -1} className={inspectorTab === "payload" ? "active" : ""} onClick={() => setInspectorTab("payload")}>{t("Payload")}</button> : null}<button id="message-depth-delivery-tab" type="button" role="tab" aria-controls="message-depth-delivery-panel" aria-selected={inspectorTab === "delivery"} tabIndex={inspectorTab === "delivery" ? 0 : -1} className={inspectorTab === "delivery" ? "active" : ""} onClick={() => setInspectorTab("delivery")}>{t("Delivery")}</button></div>
+    {inspectorTab === "payload" ? <div id="message-depth-payload-panel" role="tabpanel" aria-labelledby="message-depth-payload-tab">
       <div className="code-toolbar"><span>{t(payload.format === "json" ? "JSON payload" : payload.format === "text" ? "Text payload" : "Redis fields")}</span><button className={wrapLines ? "active" : ""} aria-pressed={wrapLines} aria-label={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} title={wrapLines ? t("Disable line wrapping") : t("Wrap lines")} onClick={() => setWrapLines((current) => !current)}><WrapText size={15} /></button></div>
       <pre className={`payload-code-view ${wrapLines ? "wrap" : ""}`}>{payload.content}</pre>
       <div className="inspector-section"><h4>{t("Metadata")}</h4><div className="detail-list"><div><span>Stream</span><strong className="mono">{stream}</strong></div><div><span>{t("Timestamp")}</span><strong className="mono">{formatTimestamp(entry.timestamp, locale)}</strong></div><div><span>{t("Size")}</span><strong>{new Blob([JSON.stringify(entry.fields)]).size} B</strong></div><div><span>{t("Fields")}</span><strong>{Object.keys(entry.fields).length}</strong></div></div></div>
-    </> : <MessageDeliveryPanel connectionId={connectionId} streamKey={stream} entryId={entry.id} sourceAvailable={!sourceMissing} canManageGroups={canManageGroups} canWriteStreams={canWriteStreams} onChanged={onChanged} onToast={onToast} />}
-  </aside>;
+    </div> : <div id="message-depth-delivery-panel" role="tabpanel" aria-labelledby="message-depth-delivery-tab"><MessageDeliveryPanel connectionId={connectionId} streamKey={stream} entryId={entry.id} initialGroupName={initialGroupName} sourceAvailable={!sourceMissing} canManageGroups={canManageGroups} canWriteStreams={canWriteStreams} onChanged={onChanged} onToast={onToast} /></div>}
+  </div>;
+}
+
+type StreamDepthBreadcrumbItem = { label: string; onClick: () => void };
+
+function StreamDepthBreadcrumbs({ items = [], current }: { items?: StreamDepthBreadcrumbItem[]; current: string }) {
+  const { t } = useI18n();
+  return <nav className="stream-depth-breadcrumbs breadcrumbs" aria-label={t("Breadcrumb")}>
+    {items.map((item, index) => <span key={`${item.label}:${index}`}><button type="button" onClick={item.onClick} title={item.label}>{item.label}</button><i aria-hidden="true">/</i></span>)}
+    <strong aria-current="page" title={current}>{current}</strong>
+  </nav>;
 }
 
 function MonitorStreamModal({ connectionId, onClose, onSubmit }: { connectionId: string; onClose: () => void; onSubmit: (keys: string[]) => Promise<void> }) {
@@ -945,6 +1140,17 @@ function AddMessageModal({ connectionId, stream, onClose, onAdded }: { connectio
 function formatTimestamp(value: string, locale: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale, { hour12: false });
+}
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
+
+function formatBytes(value: number | null | undefined, locale: string) {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return "—";
+  if (value === 0) return "0 B";
+  const unitIndex = Math.min(Math.floor(Math.log(value) / Math.log(1024)), BYTE_UNITS.length - 1);
+  const amount = value / (1024 ** unitIndex);
+  const maximumFractionDigits = unitIndex === 0 || amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(amount)} ${BYTE_UNITS[unitIndex]}`;
 }
 
 function streamIDTimestamp(id: string) {

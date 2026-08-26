@@ -16,6 +16,7 @@ type Props = {
   connectionId: string;
   streamKey: string;
   entryId: string;
+  initialGroupName?: string;
   sourceAvailable: boolean;
   canManageGroups: boolean;
   canWriteStreams: boolean;
@@ -23,7 +24,7 @@ type Props = {
   onToast: (toast: ToastState) => void;
 };
 
-type RecoveryPreview = {
+type PendingActionPreview = {
   kind: "ack" | "retry";
   input: RecoveryPlanInput;
   plan: RecoveryPlan;
@@ -37,11 +38,11 @@ type QuarantinePreview = {
   idempotencyKey: string;
 };
 
-type ActionPreview = RecoveryPreview | QuarantinePreview;
+type ActionPreview = PendingActionPreview | QuarantinePreview;
 
 const operationID = () => `ui-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
 
-export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceAvailable, canManageGroups, canWriteStreams, onChanged, onToast }: Props) {
+export function MessageDeliveryPanel({ connectionId, streamKey, entryId, initialGroupName = "", sourceAvailable, canManageGroups, canWriteStreams, onChanged, onToast }: Props) {
   const { locale, t } = useI18n();
   const [delivery, setDelivery] = useState<MessageDelivery | null>(null);
   const [selectedGroupName, setSelectedGroupName] = useState("");
@@ -64,9 +65,14 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
       const response = await api.messageDelivery(connectionId, streamKey, entryId);
       if (requestID !== requestSequence.current) return;
       setDelivery(response);
-      setSelectedGroupName((current) => response.groups.some((group) => group.group === current)
-        ? current
-        : response.groups.find((group) => group.pending)?.group ?? response.groups[0]?.group ?? "");
+      setSelectedGroupName((current) => {
+        if (initialGroupName) {
+          return response.groups.some((group) => group.group === initialGroupName) ? initialGroupName : "";
+        }
+        return response.groups.some((group) => group.group === current)
+          ? current
+          : response.groups.find((group) => group.pending)?.group ?? response.groups[0]?.group ?? "";
+      });
       setRetryConsumers(Object.fromEntries(response.groups.map((group) => [
         group.group,
         group.availableConsumers.find((consumer) => consumer !== group.consumer) ?? group.availableConsumers[0] ?? "",
@@ -78,7 +84,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
     } finally {
       if (requestID === requestSequence.current) setLoading(false);
     }
-  }, [connectionId, entryId, streamKey, t]);
+  }, [connectionId, entryId, initialGroupName, streamKey, t]);
 
   useEffect(() => {
     currentEntryID.current = entryId;
@@ -103,7 +109,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
     return selectedGroup.availableConsumers;
   }, [selectedGroup]);
 
-  const prepareRecovery = async (kind: "ack" | "retry", group: MessageDeliveryGroup) => {
+  const preparePendingAction = async (kind: "ack" | "retry", group: MessageDeliveryGroup) => {
     const actionID = ++actionSequence.current;
     const input: RecoveryPlanInput = kind === "ack"
       ? { action: "xack", connectionId, streamKey, group: group.group, ids: [entryId] }
@@ -125,7 +131,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
       setPreview({ kind, input, plan, idempotencyKey: operationID() });
     } catch (cause) {
       if (actionID !== actionSequence.current) return;
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the recovery plan."));
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the message action."));
     } finally {
       if (actionID === actionSequence.current) setBusy(false);
     }
@@ -151,7 +157,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
       setPreview({ kind: "dlq", input, plan, idempotencyKey: operationID() });
     } catch (cause) {
       if (actionID !== actionSequence.current) return;
-      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare quarantine."));
+      setError(cause instanceof Error ? t(cause.message) : t("Unable to prepare the DLQ action."));
     } finally {
       if (actionID === actionSequence.current) setBusy(false);
     }
@@ -208,7 +214,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
         await onChanged();
       }
     } catch (cause) {
-      if (currentEntryID.current === executingEntryID) setError(cause instanceof Error ? t(cause.message) : t("Unable to execute recovery."));
+      if (currentEntryID.current === executingEntryID) setError(cause instanceof Error ? t(cause.message) : t("Unable to execute the message action."));
     } finally {
       if (currentEntryID.current === executingEntryID) setBusy(false);
     }
@@ -251,8 +257,8 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
         <strong className="mono">{selectedGroup.group}</strong>
         <span>{t(selectedGroup.pending ? "Pending message" : "Not pending")}</span>
       </header>
-      {selectedGroup.pending ? <div className="delivery-recovery-actions">
-        <button type="button" onClick={() => void prepareRecovery("ack", selectedGroup)} disabled={busy || !canManageGroups}><Check size={16} />{t("Preview acknowledge")}</button>
+      {selectedGroup.pending ? <div className="delivery-pending-actions">
+        <button type="button" onClick={() => void preparePendingAction("ack", selectedGroup)} disabled={busy || !canManageGroups}><Check size={16} />{t("Preview acknowledge")}</button>
         <label>
           <span>{t("Retry consumer")}</span>
           <select value={retryConsumers[selectedGroup.group] ?? ""} onChange={(event) => { actionSequence.current += 1; setRetryConsumers((current) => ({ ...current, [selectedGroup.group]: event.target.value })); setPreview(null); setBusy(false); }}>
@@ -261,7 +267,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
           </select>
           {selectedGroup.consumersTruncated ? <small>{t("Showing {count} of {total} consumers.", { count: selectedGroup.availableConsumers.length, total: selectedGroup.consumerCount ?? selectedGroup.availableConsumers.length })}</small> : null}
         </label>
-        <button type="button" onClick={() => void prepareRecovery("retry", selectedGroup)} disabled={busy || !canManageGroups || !retryConsumers[selectedGroup.group]}><RotateCcw size={16} />{t("Preview NACK / retry")}</button>
+        <button type="button" onClick={() => void preparePendingAction("retry", selectedGroup)} disabled={busy || !canManageGroups || !retryConsumers[selectedGroup.group]}><RotateCcw size={16} />{t("Preview NACK / retry")}</button>
         <small className="retry-mechanism">{t("XCLAIM reassigns PEL ownership. The target consumer must explicitly read pending entries; Redis Streams has no native NACK.")}</small>
       </div> : null}
 
@@ -270,7 +276,7 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, sourceA
         <label className="delivery-ack-source"><input type="checkbox" checked={acknowledgeSource} disabled={!selectedGroup.pending || !canManageGroups} onChange={(event) => { actionSequence.current += 1; setAcknowledgeSource(event.target.checked); setPreview(null); setBusy(false); }} /><span>{t("Acknowledge source after DLQ write")}</span></label>
         <button type="button" onClick={() => void prepareDLQ()} disabled={busy || !dlqStream.trim()}><Archive size={16} />{t("Preview send to DLQ")}</button>
       </div> : null}
-    </section> : canWriteStreams && sourceAvailable ? <section className="delivery-action-panel delivery-action-panel--no-group">
+    </section> : canWriteStreams && sourceAvailable && !initialGroupName ? <section className="delivery-action-panel delivery-action-panel--no-group">
       <div className="delivery-dlq-editor">
         <label><span>{t("Dead letter stream")}</span><input className="mono" value={dlqStream} onChange={(event) => { actionSequence.current += 1; setDLQStream(event.target.value); setPreview(null); setBusy(false); }} /></label>
         <button type="button" onClick={() => void prepareDLQ()} disabled={busy || !dlqStream.trim()}><Archive size={16} />{t("Preview send to DLQ")}</button>
