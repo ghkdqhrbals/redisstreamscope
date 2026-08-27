@@ -38,6 +38,59 @@ func TestMigrateLegacyDatabaseWithCompanionFiles(t *testing.T) {
 	}
 }
 
+func TestOpenStoreSerializesWriteTransactions(t *testing.T) {
+	dataStore, err := openStore(appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dataStore.close() })
+
+	ctx := context.Background()
+	firstConnection, err := dataStore.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = firstConnection.Close() })
+	secondConnection, err := dataStore.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondConnection.Close() })
+
+	firstTransaction, err := firstConnection.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResult := make(chan error, 1)
+	secondContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	go func() {
+		secondTransaction, beginErr := secondConnection.BeginTx(secondContext, nil)
+		if beginErr == nil {
+			beginErr = secondTransaction.Rollback()
+		}
+		secondResult <- beginErr
+	}()
+
+	select {
+	case beginErr := <-secondResult:
+		_ = firstTransaction.Rollback()
+		t.Fatalf("second write transaction began before the first completed: %v", beginErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := firstTransaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case beginErr := <-secondResult:
+		if beginErr != nil {
+			t.Fatalf("second write transaction did not proceed after the first committed: %v", beginErr)
+		}
+	case <-secondContext.Done():
+		t.Fatalf("second write transaction remained blocked: %v", secondContext.Err())
+	}
+}
+
 func TestEffectivePermissionActionsReflectBaseRoleScopedAllowAndGlobalDeny(t *testing.T) {
 	dataStore, err := openStore(appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour})
 	if err != nil {

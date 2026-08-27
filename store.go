@@ -133,7 +133,10 @@ func openStore(config appConfig) (*store, error) {
 	if err := os.MkdirAll(filepath.Dir(config.DataPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	dsn := "file:" + config.DataPath + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	// Reserve SQLite's single writer slot when a transaction begins. Several
+	// collectors read before writing; deferred transactions can otherwise fail
+	// with SQLITE_BUSY_SNAPSHOT when another collector commits in between.
+	dsn := "file:" + config.DataPath + "?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
