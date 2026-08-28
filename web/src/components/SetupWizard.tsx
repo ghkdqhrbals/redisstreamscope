@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Database, Layers3, LockKeyhole, ServerCog, UserRoundCog } from "lucide-react";
 import { api } from "../api";
 import type { ApiSession, RedisConnectionConfig } from "../types";
-import { LanguageSelect, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { emptyRedisConnection, RedisConnectionEditor } from "./RedisConnectionEditor";
 
 const steps = [
@@ -71,7 +71,6 @@ export function SetupWizard({ configPath, initialConnection, onComplete }: {
     <main className="setup-page">
       <aside className="setup-rail">
         <div className="setup-wordmark"><span className="brand-mark"><Layers3 size={19} /></span><strong>RedisStreamScope</strong></div>
-        <LanguageSelect className="setup-language" />
         <div className="setup-progress">
           {steps.map(({ label, icon: Icon }, index) => <div className={index === step ? "active" : index < step ? "complete" : ""} key={label}><span>{index < step ? <Check size={14} /> : <Icon size={15} />}</span><div><strong>{t(label)}</strong><small>{index < step ? t("Complete") : index === step ? t("In progress") : t("Pending")}</small></div></div>)}
         </div>

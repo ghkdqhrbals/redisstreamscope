@@ -3,6 +3,7 @@ import { BookmarkPlus, LayoutDashboard, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import type { DashboardTarget, SavedDashboard, StreamMetricSeries, ToastState } from "../types";
+import { Select } from "./Select";
 
 type AvailableTarget = DashboardTarget & { connectionName: string };
 
@@ -18,6 +19,13 @@ export function SavedDashboardsPanel({ targets, currentUserId, role, onToast }: 
   const [shared, setShared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const rangeOptions = useMemo(() => [
+    { value: "5m", label: t("Last 5 minutes") },
+    { value: "15m", label: t("Last 15 minutes") },
+    { value: "1h", label: t("Last hour") },
+    { value: "6h", label: t("Last 6 hours") },
+    { value: "24h", label: t("Last 24 hours") },
+  ], [t]);
   const selected = items.find((item) => item.id === selectedID) ?? null;
   const canDeleteSelected = Boolean(selected && (role === "admin" || selected.ownerId === currentUserId));
 
@@ -64,7 +72,7 @@ export function SavedDashboardsPanel({ targets, currentUserId, role, onToast }: 
     <header className="metric-history-header"><div><h2><LayoutDashboard size={16} />{t("Saved dashboards")}</h2><span>{t("Reusable multi-stream comparisons")}</span></div><button type="button" onClick={() => setShowCreate((current) => !current)}><BookmarkPlus size={14} />{t("Save dashboard")}</button></header>
     {error ? <div className="metric-history-error" role="alert">{error}</div> : null}
     {showCreate ? <form className="dashboard-builder" onSubmit={create}>
-      <div><label>{t("Dashboard name")}<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} /></label><label>{t("Time range")}<select value={range} onChange={(event) => setRange(event.target.value as StreamMetricSeries["range"])}><option value="5m">{t("Last 5 minutes")}</option><option value="15m">{t("Last 15 minutes")}</option><option value="1h">{t("Last hour")}</option><option value="6h">{t("Last 6 hours")}</option><option value="24h">{t("Last 24 hours")}</option></select></label><label className="checkbox-field"><input type="checkbox" checked={shared} onChange={(event) => setShared(event.target.checked)} /><span>{t("Share with other users")}</span></label></div>
+      <div><label>{t("Dashboard name")}<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} /></label><label>{t("Time range")}<Select value={range} options={rangeOptions} onChange={(next) => setRange(next as StreamMetricSeries["range"])} ariaLabel={t("Time range")} className="select-control--block" size="compact" /></label><label className="checkbox-field"><input type="checkbox" checked={shared} onChange={(event) => setShared(event.target.checked)} /><span>{t("Share with other users")}</span></label></div>
       <div className="dashboard-target-picker">{targets.map((target) => { const id = targetID(target); return <label key={id}><input type="checkbox" checked={selectedTargets.includes(id)} disabled={!selectedTargets.includes(id) && selectedTargets.length >= 8} onChange={(event) => setSelectedTargets((current) => event.target.checked ? [...current, id] : current.filter((item) => item !== id))} /><span className="mono">{target.streamKey}</span><em>{target.connectionName}</em></label>; })}</div>
       <footer><span>{t("{count} of 8 streams", { count: selectedTargets.length })}</span><button type="submit" className="primary-button" disabled={busy || !name.trim() || !selectedTargets.length}>{busy ? t("Saving…") : t("Save dashboard")}</button></footer>
     </form> : null}

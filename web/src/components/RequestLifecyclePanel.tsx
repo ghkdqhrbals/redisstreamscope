@@ -5,6 +5,7 @@ import { useI18n } from "../i18n";
 import type { LifecycleMetrics, LifecycleRequest, LifecycleSeriesPoint, StreamMetricSeries } from "../types";
 import { MetricTimeSeriesChart, type MetricChartSeries } from "./MetricTimeSeriesChart";
 import { ResizableGrid, type ResizableGridColumn } from "./ResizableGrid";
+import { Select } from "./Select";
 
 type RequestLifecyclePanelProps = {
   connectionId: string;
@@ -33,6 +34,15 @@ export function RequestLifecyclePanel({ connectionId, streamKey, groupName = "" 
   const [metricsError, setMetricsError] = useState("");
   const [requestsError, setRequestsError] = useState("");
   const [requestSearch, setRequestSearch] = useState("");
+  const rangeOptions = useMemo(() => [
+    { value: "1m", label: t("Last minute") },
+    { value: "5m", label: t("Last 5 minutes") },
+    { value: "15m", label: t("Last 15 minutes") },
+    { value: "1h", label: t("Last hour") },
+    { value: "6h", label: t("Last 6 hours") },
+    { value: "24h", label: t("Last 24 hours") },
+    { value: "7d", label: t("Last 7 days") },
+  ], [t]);
   const deferredRequestSearch = useDeferredValue(requestSearch);
   const [requestCursor, setRequestCursor] = useState("");
   const [requestHistory, setRequestHistory] = useState<string[]>([]);
@@ -155,9 +165,7 @@ export function RequestLifecyclePanel({ connectionId, streamKey, groupName = "" 
     <header className="metric-history-header">
       <div><h2>{t("Request lifecycle")}</h2><span>{groupName || t("Application-instrumented latency")}</span></div>
       <div className="metric-history-controls">
-        <select value={range} onChange={(event) => setRange(event.target.value as StreamMetricSeries["range"])} aria-label={t("Time range")}>
-          <option value="1m">{t("Last minute")}</option><option value="5m">{t("Last 5 minutes")}</option><option value="15m">{t("Last 15 minutes")}</option><option value="1h">{t("Last hour")}</option><option value="6h">{t("Last 6 hours")}</option><option value="24h">{t("Last 24 hours")}</option><option value="7d">{t("Last 7 days")}</option>
-        </select>
+        <Select value={range} options={rangeOptions} onChange={(next) => setRange(next as StreamMetricSeries["range"])} ariaLabel={t("Time range")} prefix={t("Range")} size="compact" />
         <button type="button" className={live ? "metric-live active" : "metric-live"} aria-pressed={live} onClick={() => setLive((current) => !current)}><Radio size={14} />{t("Live")}</button>
         <button type="button" aria-label={t("Refresh metrics")} disabled={loading || requestLoading || !connectionId || !streamKey} onClick={() => { void load(); void loadRequests(); }}><RefreshCw className={loading || requestLoading ? "spin" : ""} size={14} /></button>
       </div>

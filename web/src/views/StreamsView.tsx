@@ -8,11 +8,12 @@ import {
   useState,
 } from "react";
 import {
+  ArrowDown,
   ArrowDownUp,
+  ArrowUp,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clipboard,
   Pause,
   Play,
   Plus,
@@ -26,9 +27,10 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
+import { InspectorResizeHandle } from "../components/InspectorResizeHandle";
 import { MessageDeliveryPanel } from "../components/MessageDeliveryPanel";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
-import { StreamInsightsPanel } from "../components/StreamInsightsPanel";
+import { Select } from "../components/Select";
 import { useI18n } from "../i18n";
 import type { ConsumerGroup, ConsumerInfo, OverviewStreamItem, PendingEntry, RedisConnection, RedisEntry, StreamItem, ToastState } from "../types";
 
@@ -44,7 +46,7 @@ type StreamsViewProps = {
 };
 
 type MessageSortKey = "id" | "timestamp" | "size" | "fields";
-type StreamDepth = "catalog" | "stream" | "message" | "group";
+type StreamDepth = "catalog" | "stream" | "group";
 type MessageOrigin = { kind: "messages" } | { kind: "group"; groupName: string };
 const messagePageSize = 100;
 const streamMetricsModeProps = { mode: "stream" as const };
@@ -84,7 +86,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const [streamsSectionOpen, setStreamsSectionOpen] = useState(true);
   const [messagesSectionOpen, setMessagesSectionOpen] = useState(true);
   const [groupsSectionOpen, setGroupsSectionOpen] = useState(true);
-  const [insightsSectionOpen, setInsightsSectionOpen] = useState(false);
+  const [inspectorOverlay, setInspectorOverlay] = useState(false);
   const [streamMutation, setStreamMutation] = useState("");
   const [selectedGroupName, setSelectedGroupName] = useState("");
   const [groupConsumers, setGroupConsumers] = useState<ConsumerInfo[]>([]);
@@ -108,22 +110,28 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   selectedStreamKeyRef.current = selectedStreamKey;
   const streamColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "key", label: t("Stream key"), defaultWidth: 260, minWidth: 180, grow: true },
-    { id: "entries", label: t("Entries"), defaultWidth: 100, minWidth: 80 },
-    { id: "memory", label: t("Memory"), defaultWidth: 120, minWidth: 90 },
-    { id: "groups", label: t("Consumer groups"), defaultWidth: 145, minWidth: 115 },
-    { id: "lag", label: t("Total lag"), defaultWidth: 105, minWidth: 85 },
-    { id: "pending", label: t("Pending"), defaultWidth: 100, minWidth: 80 },
-    { id: "last-consumed", label: t("Last consumed"), defaultWidth: 190, minWidth: 145 },
-    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 62, minWidth: 56 },
+    { id: "key", label: t("Stream key"), defaultWidth: 310, minWidth: 240, grow: true },
+    { id: "entries", label: t("Entries"), defaultWidth: 78, minWidth: 72 },
+    { id: "memory", label: t("Memory"), defaultWidth: 90, minWidth: 80 },
+    { id: "groups", label: t("Consumer groups"), defaultWidth: 96, minWidth: 90 },
+    { id: "lag", label: t("Total lag"), defaultWidth: 80, minWidth: 72 },
+    { id: "pending", label: t("Pending"), defaultWidth: 80, minWidth: 72 },
+    { id: "last-consumed", label: t("Last consumed"), defaultWidth: 160, minWidth: 145 },
+    { id: "actions", label: null, ariaLabel: t("Actions"), defaultWidth: 50, minWidth: 48 },
   ], [t]);
   const messageColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "id", label: "ID", defaultWidth: 180, minWidth: 130 },
-    { id: "timestamp", label: t("Timestamp"), defaultWidth: 205, minWidth: 160 },
-    { id: "payload", label: t("Payload preview"), defaultWidth: 420, minWidth: 220, grow: true },
-    { id: "size", label: t("Size"), defaultWidth: 95, minWidth: 80 },
-    { id: "fields", label: t("Fields"), defaultWidth: 90, minWidth: 80 },
+    { id: "id", label: "ID", defaultWidth: 165, minWidth: 130 },
+    { id: "timestamp", label: t("Timestamp"), defaultWidth: 190, minWidth: 160 },
+    { id: "payload", label: t("Payload preview"), defaultWidth: 400, minWidth: 220, grow: true },
+    { id: "size", label: t("Size"), defaultWidth: 90, minWidth: 80 },
+    { id: "fields", label: t("Fields"), defaultWidth: 80, minWidth: 74 },
   ], [t]);
+  const messageSortOptions = useMemo(() => (['id', 'timestamp', 'size', 'fields'] as MessageSortKey[]).flatMap((sortKey) =>
+    (["desc", "asc"] as const).map((direction) => ({
+      value: `${sortKey}:${direction}`,
+      label: `${t(sortKey === "id" ? "ID" : sortKey === "timestamp" ? "Timestamp" : sortKey === "size" ? "Size" : "Fields")} · ${t(direction === "asc" ? "ascending" : "descending")}`,
+    })),
+  ), [t]);
   const loadEntriesAndGroups = useCallback(async (nextConnectionId: string, nextKey: string) => {
     const requestID = ++streamContentLoadSequence.current;
     entryPageLoadSequence.current += 1;
@@ -391,12 +399,18 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     return messageSort.direction === "asc" ? comparison : -comparison;
   }), [filteredEntries, messageSort]);
   const selectedIndex = displayedEntries.findIndex((entry) => entry.id === selectedId);
-  const selectedEntry = inspectedEntry?.id === selectedId
-    ? inspectedEntry
-    : selectedIndex >= 0 ? displayedEntries[selectedIndex] : null;
+  const showEntryInspector = inspectedEntry?.id === selectedId ? inspectedEntry : null;
   const selectedStream = streams.find((stream) => stream.key === key);
   const selectedGroup = groups.find((group) => group.name === selectedGroupName) ?? null;
   const liveLabel = paused ? t("Paused") : liveStatus === "connecting" ? t("Connecting…") : liveStatus === "reconnecting" ? t("Reconnecting…") : liveStatus === "live" ? t("Listening") : t("Stopped");
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const sync = () => setInspectorOverlay(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     if (depth !== "group" || groupDetailLoading || !selectedGroupName || selectedGroup) return;
@@ -412,6 +426,13 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
     setSelectedId(displayedEntries[next].id);
   };
 
+  const closeEntryInspector = useCallback(() => {
+    entryInspectSequence.current += 1;
+    setSelectedId("");
+    setInspectedEntry(null);
+    setInspectedEntrySourceMissing(false);
+  }, []);
+
   const inspectEntry = async (entryId: string, origin: MessageOrigin, preferredTab: "payload" | "delivery") => {
     const requestID = ++entryInspectSequence.current;
     const loaded = entries.find((entry) => entry.id === entryId);
@@ -421,7 +442,6 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setEntryInspectorPreferredTab(preferredTab);
       setMessageOrigin(origin);
       setSelectedId(entryId);
-      setDepth("message");
       return;
     }
     setError("");
@@ -434,7 +454,6 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setEntryInspectorPreferredTab(preferredTab);
       setMessageOrigin(origin);
       setSelectedId(entryId);
-      setDepth("message");
     } catch (cause) {
       if (requestID === entryInspectSequence.current) onToast({ kind: "error", title: t("Unable to open message"), message: cause instanceof Error ? t(cause.message) : t("Unable to load the message.") });
     }
@@ -485,6 +504,8 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
       setEntryCursorHistory(history);
       setHasMoreEntries(response.hasMore);
       setSelectedId("");
+      setInspectedEntry(null);
+      setInspectedEntrySourceMissing(false);
       return true;
     } catch (cause) {
       if (requestID === entryPageLoadSequence.current) setError(cause instanceof Error ? t(cause.message) : t("Unable to load the message page."));
@@ -610,20 +631,10 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
   }, [focusGroup, focusSection, groups, key, loading]);
 
   const activeConnection = connections.find((connection) => connection.id === connectionId);
-  const returnFromMessage = () => {
-    if (messageOrigin.kind === "group") {
-      setDepth("group");
-      setSelectedGroupName(messageOrigin.groupName);
-      setInspectedEntry(null);
-      setInspectedEntrySourceMissing(false);
-      return;
-    }
-    openStreamDepth("messages");
-  };
 
   return (
-    <div className="stream-layout stream-layout--wide stream-depth-page">
-      <section className="stream-main" ref={streamMainRef}>
+    <div className={`stream-layout stream-depth-page ${showEntryInspector ? "" : "stream-layout--wide"}`}>
+      <section className="stream-main" ref={streamMainRef} inert={showEntryInspector && inspectorOverlay ? true : undefined}>
         {depth === "catalog" ? <>
           <div className="page-header stream-depth-header">
             <div>
@@ -645,7 +656,7 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
                 {canWrite ? <button type="button" className="stream-monitor-button" disabled={!connectionId} onClick={() => setShowMonitor(true)}><Plus size={15} />{t("Add stream keys for monitoring")}</button> : null}
               </div> : <strong className="stream-section-count">{streams.length.toLocaleString(locale)}</strong>}
             </header>
-            {streamsSectionOpen ? <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog-metrics-v2" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
+            {streamsSectionOpen ? <ResizableGrid className="stream-catalog-table" storageKey="streams-catalog-metrics-v6" columns={streamColumns} headerClassName="stream-catalog-head" fixedLayout>
               {filteredStreams.map((stream) => {
                 const metrics = overviewByKey.get(stream.key);
                 const memory = metrics?.memoryBytes ?? stream.memoryBytes;
@@ -684,7 +695,6 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
             </div>
             <div className="header-actions">
               <button className="stream-depth-back" type="button" onClick={openCatalog}><ChevronLeft size={15} />{t("Back")}</button>
-              <button type="button" onClick={() => void navigator.clipboard?.writeText(key)}><Clipboard size={14} />{t("Copy key")}</button>
               <button onClick={() => void load()} disabled={loading}><RefreshCw size={15} />{loading ? t("Loading…") : t("Refresh")}</button>
             </div>
           </div>
@@ -709,31 +719,34 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
                 {messagesSectionOpen ? <>
                   <div className="table-toolbar">
                     <label className="toolbar-search"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search ID, field or value…")} /></label>
-                    <label className="mobile-message-sort">
+                    <div className="mobile-message-sort">
                       <ArrowDownUp size={14} />
-                      <select
-                        aria-label={t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}
+                      <Select
+                        ariaLabel={t("Sorted by {key} · {direction}", { key: t(messageSort.key === "id" ? "ID" : messageSort.key === "timestamp" ? "Timestamp" : messageSort.key === "size" ? "Size" : "Fields"), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") })}
                         value={`${messageSort.key}:${messageSort.direction}`}
-                        onChange={(event) => {
-                          const [sortKey, direction] = event.target.value.split(":") as [MessageSortKey, "asc" | "desc"];
+                        options={messageSortOptions}
+                        onChange={(next) => {
+                          const [sortKey, direction] = next.split(":") as [MessageSortKey, "asc" | "desc"];
                           setMessageSort({ key: sortKey, direction });
                         }}
-                      >
-                        {(["id", "timestamp", "size", "fields"] as MessageSortKey[]).flatMap((sortKey) => (["desc", "asc"] as const).map((direction) => <option key={`${sortKey}:${direction}`} value={`${sortKey}:${direction}`}>{t(sortKey === "id" ? "ID" : sortKey === "timestamp" ? "Timestamp" : sortKey === "size" ? "Size" : "Fields")} · {t(direction === "asc" ? "ascending" : "descending")}</option>))}
-                      </select>
-                    </label>
+                        className="select-control--block"
+                        size="compact"
+                      />
+                    </div>
                     <button className={`live-button ${live ? "active" : ""}`} aria-pressed={live} disabled={entryPageLoading} onClick={() => void toggleLiveTail()}><span /><span>{t("Live tail")}</span></button>
                     <button className={paused ? "pause-button active" : "pause-button"} aria-label={paused ? t("Resume live tail") : t("Pause live tail")} onClick={() => setPaused((value) => !value)} disabled={!live}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
                     {live ? <span className={`live-state live-state--${liveStatus}`}><Radio size={12} />{liveLabel}</span> : null}
                   </div>
                   <div className="message-table-scroll">
-                    <ResizableGrid className="message-table" storageKey="stream-messages" columns={messageColumns} headerClassName="message-table-head" renderHeader={(column) => {
+                    <ResizableGrid className="message-table" storageKey="stream-messages-v4" columns={messageColumns} headerClassName="message-table-head" renderHeader={(column) => {
                       if (column.id === "payload") return column.label;
                       const sortKey = column.id as MessageSortKey;
-                      return <button className={messageSort.key === sortKey ? "message-sort active" : "message-sort"} onClick={() => toggleMessageSort(sortKey)}>{column.label} <ArrowDownUp size={13} /></button>;
+                      const active = messageSort.key === sortKey;
+                      const SortIcon = active ? (messageSort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowDownUp;
+                      return <button className={active ? "message-sort active" : "message-sort"} aria-label={active ? t("Sorted by {key} · {direction}", { key: String(column.label), direction: t(messageSort.direction === "asc" ? "ascending" : "descending") }) : t("Sort by {key}", { key: String(column.label) })} onClick={() => toggleMessageSort(sortKey)}>{column.label} <SortIcon size={13} /></button>;
                     }}>
                       <div className="message-table-body">
-                        {displayedEntries.map((entry) => <button className="message-row" key={entry.id} onClick={() => void inspectEntry(entry.id, { kind: "messages" }, "payload")}>
+                        {displayedEntries.map((entry) => <button className={showEntryInspector?.id === entry.id ? "message-row selected" : "message-row"} aria-pressed={showEntryInspector?.id === entry.id} key={entry.id} onClick={() => void inspectEntry(entry.id, { kind: "messages" }, "payload")}>
                           <span className="mono id-cell" data-label={t("ID")}>{entry.id}</span>
                           <span className="mono timestamp-cell" data-label={t("Timestamp")}>{formatTimestamp(entry.timestamp, locale)}</span>
                           <span className="mono fields-cell" data-label={t("Payload preview")}>{Object.entries(entry.fields).slice(0, 4).map(([field, value]) => `${field}=${String(value)}`).join("   ")}</span>
@@ -777,59 +790,8 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
                 /> : null}
               </section>
 
-              <section className="stream-data-section stream-insights-section">
-                <div className="surface-heading stream-section-heading">
-                  <button type="button" className="stream-section-toggle" aria-expanded={insightsSectionOpen} onClick={() => setInsightsSectionOpen((current) => !current)}>
-                    {insightsSectionOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}<span><h2>{t("Schema & traces")}</h2></span>
-                  </button>
-                </div>
-                {insightsSectionOpen ? <StreamInsightsPanel connectionId={connectionId} streamKey={key} /> : null}
-              </section>
               </div>
             </div>
-          </div>
-        </> : null}
-
-        {depth === "message" && key && selectedEntry ? <>
-          <div className="page-header stream-depth-header">
-            <div>
-              <StreamDepthBreadcrumbs
-                items={messageOrigin.kind === "group"
-                  ? [
-                    { label: t("Streams"), onClick: openCatalog },
-                    { label: key, onClick: () => openStreamDepth() },
-                    { label: t("Consumer groups"), onClick: () => openStreamDepth("groups") },
-                    { label: messageOrigin.groupName, onClick: () => { setDepth("group"); setSelectedGroupName(messageOrigin.groupName); } },
-                  ]
-                  : [
-                    { label: t("Streams"), onClick: openCatalog },
-                    { label: key, onClick: () => openStreamDepth() },
-                    { label: t("Messages"), onClick: () => openStreamDepth("messages") },
-                  ]}
-                current={selectedEntry.id}
-              />
-              <h1 className="mono" data-depth-heading tabIndex={-1}>{selectedEntry.id}</h1>
-            </div>
-            <div className="header-actions">
-              <button className="stream-depth-back" type="button" onClick={returnFromMessage}><ChevronLeft size={15} />{t("Back")}</button>
-              <button type="button" aria-label={t("Previous entry")} onClick={() => moveSelection(-1)} disabled={selectedIndex <= 0}><ChevronLeft size={16} /></button>
-              <button type="button" aria-label={t("Next entry")} onClick={() => moveSelection(1)} disabled={selectedIndex < 0 || selectedIndex >= displayedEntries.length - 1}><ChevronRight size={16} /></button>
-            </div>
-          </div>
-          {error ? <div className="page-error">{error}</div> : null}
-          <div className="stream-depth-content">
-            <MessageDepthContent
-              connectionId={connectionId}
-              entry={selectedEntry}
-              stream={key}
-              preferredTab={entryInspectorPreferredTab}
-              initialGroupName={messageOrigin.kind === "group" ? messageOrigin.groupName : ""}
-              sourceMissing={inspectedEntrySourceMissing}
-              canManageGroups={canManageGroups}
-              canWriteStreams={canWrite}
-              onChanged={refreshDeliveryContext}
-              onToast={onToast}
-            />
           </div>
         </> : null}
 
@@ -872,6 +834,24 @@ export function StreamsView({ selectedConnectionId = "", selectedStreamKey, focu
           </div>
         </> : null}
       </section>
+
+      {showEntryInspector && key ? <EntryInspector
+        connectionId={connectionId}
+        entry={showEntryInspector}
+        stream={key}
+        preferredTab={entryInspectorPreferredTab}
+        initialGroupName={messageOrigin.kind === "group" ? messageOrigin.groupName : ""}
+        sourceMissing={inspectedEntrySourceMissing}
+        canManageGroups={canManageGroups}
+        canWriteStreams={canWrite}
+        canMovePrevious={selectedIndex > 0}
+        canMoveNext={selectedIndex >= 0 && selectedIndex < displayedEntries.length - 1}
+        modal={inspectorOverlay}
+        onChanged={refreshDeliveryContext}
+        onToast={onToast}
+        onMove={moveSelection}
+        onClose={closeEntryInspector}
+      /> : null}
 
       {canWrite && showAdd ? <AddMessageModal connectionId={connectionId} stream={key} onClose={() => setShowAdd(false)} onAdded={async (id) => {
         setShowAdd(false);
@@ -975,7 +955,84 @@ function ConsumerGroupDepthContent({
   </div>;
 }
 
-function MessageDepthContent({ connectionId, entry, stream, preferredTab, initialGroupName, sourceMissing, canManageGroups, canWriteStreams, onChanged, onToast }: {
+function EntryInspector({ connectionId, entry, stream, preferredTab, initialGroupName, sourceMissing, canManageGroups, canWriteStreams, canMovePrevious, canMoveNext, modal, onChanged, onToast, onMove, onClose }: {
+  connectionId: string;
+  entry: RedisEntry;
+  stream: string;
+  preferredTab: "payload" | "delivery";
+  initialGroupName: string;
+  sourceMissing: boolean;
+  canManageGroups: boolean;
+  canWriteStreams: boolean;
+  canMovePrevious: boolean;
+  canMoveNext: boolean;
+  modal: boolean;
+  onChanged: () => Promise<void>;
+  onToast: (toast: ToastState) => void;
+  onMove: (step: number) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const panelRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (!modal || event.key !== "Tab" || !panelRef.current) return;
+      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    closeButtonRef.current?.focus({ preventScroll: true });
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    };
+  }, [modal, onClose]);
+
+  return <aside ref={panelRef} className="inspector entry-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-labelledby="entry-inspector-title">
+    <InspectorResizeHandle />
+    <header>
+      <div><strong id="entry-inspector-title">{t("Entry details")}</strong><span className="mono" title={entry.id}>{entry.id}</span></div>
+      <div className="inspector-actions">
+        <button type="button" onClick={() => onMove(-1)} disabled={!canMovePrevious} aria-label={t("Previous entry")}><ChevronLeft size={16} /></button>
+        <button type="button" onClick={() => onMove(1)} disabled={!canMoveNext} aria-label={t("Next entry")}><ChevronRight size={16} /></button>
+        <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={t("Close entry details")}><X size={17} /></button>
+      </div>
+    </header>
+    <MessageDepthContent
+      connectionId={connectionId}
+      entry={entry}
+      stream={stream}
+      preferredTab={preferredTab}
+      initialGroupName={initialGroupName}
+      sourceMissing={sourceMissing}
+      canManageGroups={canManageGroups}
+      canWriteStreams={canWriteStreams}
+      onChanged={onChanged}
+      onToast={onToast}
+      embedded
+    />
+  </aside>;
+}
+
+function MessageDepthContent({ connectionId, entry, stream, preferredTab, initialGroupName, sourceMissing, canManageGroups, canWriteStreams, onChanged, onToast, embedded = false }: {
   connectionId: string;
   entry: RedisEntry;
   stream: string;
@@ -986,6 +1043,7 @@ function MessageDepthContent({ connectionId, entry, stream, preferredTab, initia
   canWriteStreams: boolean;
   onChanged: () => Promise<void>;
   onToast: (toast: ToastState) => void;
+  embedded?: boolean;
 }) {
   const { locale, t } = useI18n();
   const [inspectorTab, setInspectorTab] = useState<"payload" | "delivery">(sourceMissing ? "delivery" : "payload");
@@ -999,7 +1057,7 @@ function MessageDepthContent({ connectionId, entry, stream, preferredTab, initia
     setInspectorTab(nextTab);
     window.requestAnimationFrame(() => document.getElementById(`message-depth-${nextTab}-tab`)?.focus());
   };
-  return <div className="message-depth-surface">
+  return <div className={embedded ? undefined : "message-depth-surface"}>
     {sourceMissing ? <div className="message-depth-source-status"><em className="source-entry-missing">{t("Source entry unavailable")}</em></div> : null}
     <div className="inspector-tabs message-depth-tabs" role="tablist" aria-label={t("Entry details")} onKeyDown={(event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;

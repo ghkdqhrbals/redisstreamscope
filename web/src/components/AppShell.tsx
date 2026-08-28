@@ -21,7 +21,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Page, RedisConnection, StreamItem } from "../types";
-import { LanguageSelect, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { readMigratedStorage } from "../storage";
 
 const SIDEBAR_STORAGE_KEY = "redisstreamscope:sidebar-collapsed:v1";
@@ -281,7 +281,6 @@ export function AppShell({
             <button className="profile-scrim" onClick={() => setProfileOpen(false)} aria-label={t("Close profile menu")} />
             <div className="profile-menu" role="menu">
               <div className="profile-summary"><span>{username.slice(0, 2).toUpperCase()}</span><div><strong>{username}</strong><em>{role}</em></div></div>
-              <LanguageSelect className="profile-language" />
               <button role="menuitem" onClick={() => navigate("settings")}><UserRoundCog size={16} /><span><strong>{t("Account settings")}</strong><em>{t("Username and password")}</em></span></button>
               {canOpenAccessControl ? <button role="menuitem" onClick={() => navigate("access")}><ShieldCheck size={16} /><span><strong>{t("Access control")}</strong><em>{t("Users, roles and audit logs")}</em></span></button> : null}
               <button role="menuitem" className="profile-logout" onClick={() => { setProfileOpen(false); onLogout(); }}><LogOut size={16} /><span><strong>{t("Sign out")}</strong><em>{t("End this session")}</em></span></button>

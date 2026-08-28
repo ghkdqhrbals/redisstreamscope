@@ -19,6 +19,7 @@ type MetricTimeSeriesChartProps<TPoint extends TimestampedMetricPoint> = {
   series: MetricChartSeries<TPoint>[];
   valueKind?: "count" | "rate" | "duration";
   emptyLabel?: string;
+  expectedIntervalSeconds?: number;
 };
 
 const defaultWidth = 720;
@@ -31,6 +32,7 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
   series,
   valueKind = "count",
   emptyLabel,
+  expectedIntervalSeconds,
 }: MetricTimeSeriesChartProps<TPoint>) {
   const { locale, t } = useI18n();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -69,7 +71,19 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
   const [minimum, maximum] = useMemo(() => metricDomain(values, valueKind), [valueKind, values]);
   const hasRenderableData = Boolean(points.length && values.length && series.length);
   const valueRange = Math.max(1e-9, maximum - minimum);
-  const xAt = (index: number) => plot.left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
+  const pointTimes = useMemo(() => points.map((point) => {
+    const value = new Date(point.timestamp).getTime();
+    return Number.isFinite(value) ? value : null;
+  }), [points]);
+  const xPositions = useMemo(
+    () => metricXPositions(pointTimes, plot.left, plotWidth),
+    [plotWidth, pointTimes],
+  );
+  const gapThresholdMs = useMemo(
+    () => metricGapThreshold(pointTimes, expectedIntervalSeconds),
+    [expectedIntervalSeconds, pointTimes],
+  );
+  const xAt = (index: number) => xPositions[index] ?? plot.left + plotWidth / 2;
   const yAt = (value: number) => plot.top + plotHeight - ((value - minimum) / valueRange) * plotHeight;
   const activeHoveredIndex = hoveredIndex !== null && hoveredIndex < points.length ? hoveredIndex : null;
   const activeSelectedIndex = selectedIndex !== null && selectedIndex < points.length ? selectedIndex : null;
@@ -87,8 +101,7 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
     const bounds = svgRef.current.getBoundingClientRect();
     if (!bounds.width) return null;
     const viewX = ((clientX - bounds.left) / bounds.width) * chartWidth;
-    const ratio = Math.min(1, Math.max(0, (viewX - plot.left) / plotWidth));
-    return points.length <= 1 ? 0 : Math.round(ratio * (points.length - 1));
+    return nearestXIndex(xPositions, viewX);
   };
 
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -115,6 +128,12 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
 
   const onKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
     if (!points.length) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setHoveredIndex(null);
+      setSelectedIndex(null);
+      return;
+    }
     const currentIndex = activeSelectedIndex ?? points.length - 1;
     let nextIndex: number | null = null;
     if (event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
@@ -153,6 +172,10 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
             onFocus={() => {
               if (activeSelectedIndex === null) setSelectedIndex(points.length - 1);
             }}
+            onBlur={() => {
+              setHoveredIndex(null);
+              setSelectedIndex(null);
+            }}
             onKeyDown={onKeyDown}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -167,7 +190,7 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
               return <g key={ratio}><line className={`metric-grid-line ${Math.abs(axisValue) < valueRange / 1000 ? "zero" : ""}`} x1={plot.left} x2={chartWidth - plot.right} y1={y} y2={y} /><text className="metric-axis-label" x={plot.left - 9} y={y + 4} textAnchor="end">{formatAxisValue(axisValue, valueKind, locale)}</text></g>;
             })}
             {series.map((item) => {
-              const segments = lineSegments(points, (point) => item.value(point), xAt, yAt);
+              const segments = lineSegments(points, (point) => item.value(point), xAt, yAt, pointTimes, gapThresholdMs);
               return <g key={item.id} className={`metric-series ${item.className}`}>
                 {segments.map((path, index) => <path key={index} d={path} />)}
                 {points.length === 1 && item.value(points[0]) !== null ? <circle cx={xAt(0)} cy={yAt(item.value(points[0]) as number)} r="3.5" /> : null}
@@ -181,10 +204,10 @@ export function MetricTimeSeriesChart<TPoint extends TimestampedMetricPoint>({
               })}
             </> : null}
             <rect className="metric-chart-hit-area" x={plot.left} y={plot.top} width={plotWidth} height={plotHeight} />
-            {[0, Math.floor((points.length - 1) / 2), points.length - 1].map((pointIndex, index) => {
+            {metricAxisPointIndexes(xPositions).map((pointIndex, index, axisPoints) => {
               const point = points[pointIndex];
-              const x = index === 0 ? plot.left : index === 1 ? plot.left + plotWidth / 2 : chartWidth - plot.right;
-              const textAnchor = index === 0 ? "start" : index === 1 ? "middle" : "end";
+              const x = xAt(pointIndex);
+              const textAnchor = index === 0 ? "start" : index === axisPoints.length - 1 ? "end" : "middle";
               return <text key={`${point.timestamp}:${index}`} className="metric-axis-label metric-x-axis-label" x={x} y={chartHeight - 9} textAnchor={textAnchor}>{formatChartTime(point.timestamp, locale)}</text>;
             })}
           </svg>
@@ -233,20 +256,76 @@ function lineSegments<TPoint extends TimestampedMetricPoint>(
   value: (point: TPoint) => number | null,
   xAt: (index: number) => number,
   yAt: (value: number) => number,
+  pointTimes: Array<number | null>,
+  gapThresholdMs: number | null,
 ) {
   const segments: string[] = [];
   let current = "";
+  let previousTime: number | null = null;
   points.forEach((point, index) => {
     const item = value(point);
     if (item === null || !Number.isFinite(item)) {
       if (current) segments.push(current);
       current = "";
+      previousTime = pointTimes[index] ?? null;
       return;
     }
+    const pointTime = pointTimes[index] ?? null;
+    if (current && gapThresholdMs !== null && previousTime !== null && pointTime !== null && pointTime - previousTime > gapThresholdMs) {
+      segments.push(current);
+      current = "";
+    }
     current += `${current ? " L" : "M"} ${xAt(index).toFixed(2)} ${yAt(item).toFixed(2)}`;
+    previousTime = pointTime;
   });
   if (current) segments.push(current);
   return segments;
+}
+
+function metricXPositions(pointTimes: Array<number | null>, left: number, width: number) {
+  if (pointTimes.length <= 1) return pointTimes.map(() => left + width / 2);
+  const validTimes = pointTimes.filter((value): value is number => value !== null);
+  const minimum = validTimes.length === pointTimes.length ? Math.min(...validTimes) : NaN;
+  const maximum = validTimes.length === pointTimes.length ? Math.max(...validTimes) : NaN;
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || maximum <= minimum) {
+    return pointTimes.map((_, index) => left + (index / (pointTimes.length - 1)) * width);
+  }
+  return pointTimes.map((value) => left + (((value as number) - minimum) / (maximum - minimum)) * width);
+}
+
+function nearestXIndex(xPositions: number[], target: number) {
+  if (!xPositions.length) return null;
+  let low = 0;
+  let high = xPositions.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (xPositions[middle] < target) low = middle + 1;
+    else high = middle;
+  }
+  if (low === 0) return 0;
+  const previous = low - 1;
+  return Math.abs(xPositions[low] - target) < Math.abs(xPositions[previous] - target) ? low : previous;
+}
+
+function metricGapThreshold(pointTimes: Array<number | null>, expectedIntervalSeconds?: number) {
+  if (expectedIntervalSeconds && expectedIntervalSeconds > 0) return expectedIntervalSeconds * 2500;
+  const deltas: number[] = [];
+  for (let index = 1; index < pointTimes.length; index += 1) {
+    const previous = pointTimes[index - 1];
+    const current = pointTimes[index];
+    if (previous !== null && current !== null && current > previous) deltas.push(current - previous);
+  }
+  if (!deltas.length) return null;
+  deltas.sort((left, right) => left - right);
+  return deltas[Math.floor(deltas.length / 2)] * 2.5;
+}
+
+function metricAxisPointIndexes(xPositions: number[]) {
+  if (!xPositions.length) return [];
+  if (xPositions.length === 1) return [0];
+  const middleX = (xPositions[0] + xPositions[xPositions.length - 1]) / 2;
+  const middle = nearestXIndex(xPositions, middleX) ?? Math.floor((xPositions.length - 1) / 2);
+  return [...new Set([0, middle, xPositions.length - 1])];
 }
 
 function metricDomain(values: number[], valueKind: "count" | "rate" | "duration"): [number, number] {

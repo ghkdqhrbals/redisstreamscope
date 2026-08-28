@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
+import { Select } from "../components/Select";
 import { useI18n } from "../i18n";
 import type { ToastState } from "../types";
 
@@ -47,6 +48,23 @@ const rolePermissions: Record<string, string[]> = {
   operator: ["connections:read", "streams:read", "streams:write", "groups:read", "groups:manage", "alerts:read"],
   admin: ["*"],
 };
+
+const grantActionDefinitions = [
+  { value: "streams:read", category: "Streams" },
+  { value: "streams:write", category: "Streams" },
+  { value: "groups:read", category: "Consumer groups" },
+  { value: "groups:manage", category: "Consumer groups" },
+  { value: "connections:read", category: "Connections" },
+  { value: "alerts:read", category: "Alerts" },
+  { value: "alerts:write", category: "Alerts" },
+  { value: "settings:read", category: "Settings" },
+  { value: "settings:write", category: "Settings" },
+  { value: "access-logs:read", category: "Access logs" },
+  { value: "users:read", category: "Users" },
+  { value: "users:write", category: "Users" },
+  { value: "roles:read", category: "Roles & permissions" },
+  { value: "roles:write", category: "Roles & permissions" },
+] as const;
 
 function roleName(role: string) {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -149,7 +167,7 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
         <div><UsersRound size={17} /><span>{t("Users")}</span><strong>{users.length}</strong><em>{t("{count} active", { count: users.filter((user) => user.enabled).length })}</em></div>
         <div><UserRoundCog size={17} /><span>{t("Administrators")}</span><strong>{users.filter((user) => user.role === "admin").length}</strong><em>{t("Full access")}</em></div>
         <div><KeyRound size={17} /><span>{t("Custom grants")}</span><strong>{grants.length}</strong><em>{t("{count} explicit deny", { count: grants.filter((grant) => grant.effect === "deny").length })}</em></div>
-        <div className="access-summary-link"><button type="button" aria-label={t("Open denied access logs")} onClick={() => { setLogCursor(null); setLogCursorHistory([]); setLogResult("denied"); setTab("logs"); }}><Activity size={17} /><span>{t("Denied requests")}</span><strong>{deniedRequests}</strong><em>{t("of {count} matching requests", { count: logPage.summary.allowed + logPage.summary.denied })}</em></button></div>
+        <div className={tab === "logs" && logResult === "denied" ? "access-summary-link active" : "access-summary-link"}><button type="button" aria-label={t("Open denied access logs")} aria-pressed={tab === "logs" && logResult === "denied"} onClick={() => { setLogCursor(null); setLogCursorHistory([]); setLogResult("denied"); setTab("logs"); }}><Activity size={17} /><span>{t("Denied requests")}</span><strong>{deniedRequests}</strong><em>{t("of {count} matching requests", { count: logPage.summary.allowed + logPage.summary.denied })}</em></button></div>
       </div>
       <div className="content-tabs access-tabs" role="tablist" aria-label={t("Access Control")} onKeyDown={handleTabKeyDown}>
         <button id="access-tab-users" role="tab" aria-selected={tab === "users"} aria-controls="access-panel-users" tabIndex={tab === "users" ? 0 : -1} className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>{t("Users")}</button>
@@ -159,7 +177,34 @@ export function AccessControlView({ onToast }: { onToast: (toast: ToastState) =>
 
       {tab === "users" ? (
         <section id="access-panel-users" role="tabpanel" aria-labelledby="access-tab-users" className="access-surface">
-          <div className="access-toolbar"><label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users…")} /></label><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">{t("All roles")}</option><option value="admin">{t("Admin")}</option><option value="operator">{t("Operator")}</option><option value="viewer">{t("Viewer")}</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">{t("All status")}</option><option value="active">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></div>
+          <div className="access-toolbar access-users-toolbar">
+            <label><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users…")} /></label>
+            <Select
+              value={roleFilter}
+              onChange={setRoleFilter}
+              ariaLabel={t("Role")}
+              prefix={t("Role")}
+              size="compact"
+              options={[
+                { value: "all", label: t("All roles") },
+                { value: "admin", label: t("Admin"), tone: "warning" },
+                { value: "operator", label: t("Operator"), tone: "info" },
+                { value: "viewer", label: t("Viewer"), tone: "neutral" },
+              ]}
+            />
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              ariaLabel={t("Status")}
+              prefix={t("Status")}
+              size="compact"
+              options={[
+                { value: "all", label: t("All status") },
+                { value: "active", label: t("Active"), tone: "success" },
+                { value: "disabled", label: t("Disabled"), tone: "danger" },
+              ]}
+            />
+          </div>
           <ResizableGrid className="users-table" storageKey="access-users" columns={userColumns} headerClassName="users-head">
             {filteredUsers.map((user) => (
               <div className="user-row" key={user.id}>
@@ -233,7 +278,29 @@ function EditUserModal({ user, onClose, onSaved }: { user: AccessUser; onClose: 
       <form className="modal user-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <header><h2 id={titleId}>{t("Manage user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
         <div className="field-pair"><label>{t("Username")}<input ref={usernameRef} value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
-        <div className="field-pair"><label>{t("Basic role")}<select value={role} onChange={(event) => setRole(event.target.value)}><option value="viewer">{t("Viewer")}</option><option value="operator">{t("Operator")}</option><option value="admin">{t("Admin")}</option></select></label><label>{t("Status")}<select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")}><option value="enabled">{t("Active")}</option><option value="disabled">{t("Disabled")}</option></select></label></div>
+        <div className="field-pair">
+          <label>{t("Basic role")}<Select
+            className="select-control--block"
+            value={role}
+            onChange={setRole}
+            ariaLabel={t("Basic role")}
+            options={[
+              { value: "viewer", label: t("Viewer"), description: t("Read-only access to permitted Redis resources"), meta: t("Read only"), tone: "neutral" },
+              { value: "operator", label: t("Operator"), description: t("Stream operations and consumer group management"), meta: t("Configured Redis resources"), tone: "info" },
+              { value: "admin", label: t("Admin"), description: t("All features including users, permissions and connections"), meta: t("Full access"), tone: "warning" },
+            ]}
+          /></label>
+          <label>{t("Status")}<Select
+            className="select-control--block"
+            value={enabled ? "enabled" : "disabled"}
+            onChange={(value) => setEnabled(value === "enabled")}
+            ariaLabel={t("Status")}
+            options={[
+              { value: "enabled", label: t("Active"), tone: "success" },
+              { value: "disabled", label: t("Disabled"), tone: "danger" },
+            ]}
+          /></label>
+        </div>
         {role !== user.role ? <section className="role-change-diff" aria-live="polite">
           <header><strong>{t("Role change")}</strong><span>{t(roleName(user.role))} → {t(roleName(role))}</span></header>
           {diff.added.length ? <div><span>{t("Added permissions")}</span><ul>{diff.added.map((permission) => <li className="mono" key={permission}>+ {t(permission)}</li>)}</ul></div> : null}
@@ -301,13 +368,27 @@ function RolesPanel({ users, grants, onGrantsChange, onToast }: { users: AccessU
 function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[]; initial?: Grant; onClose: () => void; onSaved: (grant: Grant) => void }) {
   const { t } = useI18n();
   const titleId = useId();
-  const userRef = useDialogFocus<HTMLSelectElement>(onClose);
+  const userRef = useDialogFocus<HTMLButtonElement>(onClose);
   const [userId, setUserId] = useState(initial?.userId ?? users.find((user) => user.role !== "admin")?.id ?? users[0]?.id ?? "");
   const [action, setAction] = useState(initial?.action ?? "streams:read");
   const [scope, setScope] = useState(initial?.scope ?? "stream:redis:*");
   const [effect, setEffect] = useState<"allow" | "deny">(initial?.effect ?? "allow");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const userOptions = users.filter((user) => user.role !== "admin").map((user) => ({
+    value: user.id,
+    label: user.username,
+    description: user.displayName,
+    meta: t(roleName(user.role)),
+    keywords: `${user.username} ${user.displayName} ${user.id} ${user.role}`,
+  }));
+  const actionOptions = grantActionDefinitions.map(({ value, category }) => ({
+    value,
+    label: t(value),
+    description: t(category),
+    meta: value,
+    keywords: `${value} ${t(value)} ${t(category)}`,
+  }));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -326,8 +407,36 @@ function GrantModal({ users, initial, onClose, onSaved }: { users: AccessUser[];
     <div className="modal-backdrop" onMouseDown={onClose}>
       <form className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <header><h2 id={titleId}>{initial ? t("Edit resource permission") : t("Add resource permission")}</h2><button type="button" onClick={onClose} aria-label={t("Close permission dialog")}><X size={18} /></button></header>
-        <div className="field-pair"><label>{t("User")}<select ref={userRef} value={userId} onChange={(event) => setUserId(event.target.value)}>{users.filter((user) => user.role !== "admin").map((user) => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label><label>{t("Effect")}<select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")}><option value="allow">{t("Allow")}</option><option value="deny">{t("Deny")}</option></select></label></div>
-        <label>{t("Action")}<select value={action} onChange={(event) => setAction(event.target.value)}><option>streams:read</option><option>streams:write</option><option>groups:read</option><option>groups:manage</option><option>connections:read</option><option>alerts:read</option><option>alerts:write</option><option>settings:read</option><option>settings:write</option><option>access-logs:read</option><option>users:read</option><option>users:write</option><option>roles:read</option><option>roles:write</option></select></label>
+        <div className="field-pair">
+          <label>{t("User")}<Select
+            ref={userRef}
+            className="select-control--block"
+            value={userId}
+            onChange={setUserId}
+            options={userOptions}
+            ariaLabel={t("User")}
+            searchable
+            searchPlaceholder={t("Search users…")}
+          /></label>
+          <label>{t("Effect")}<Select
+            className="select-control--block"
+            value={effect}
+            onChange={(value) => setEffect(value as "allow" | "deny")}
+            ariaLabel={t("Effect")}
+            options={[
+              { value: "allow", label: t("Allow"), description: t("Apply this action to the matching scope."), meta: t("Allowed"), tone: "success" },
+              { value: "deny", label: t("Deny"), description: t("Overrides the base role and any explicit Allow."), meta: t("Denied"), tone: "danger" },
+            ]}
+          /></label>
+        </div>
+        <label>{t("Action")}<Select
+          className="select-control--block"
+          value={action}
+          onChange={setAction}
+          options={actionOptions}
+          ariaLabel={t("Action")}
+          searchable
+        /></label>
         <label>{t("Scope")}<input className="mono" value={scope} onChange={(event) => setScope(event.target.value)} placeholder="stream:redis:orders.*" required /></label>
         <div className="role-explainer"><ShieldCheck size={15} /><span>{t("An explicit Deny overrides the base role and Allow. Wildcards are supported only as a trailing *.")}</span></div>
         {error ? <div className="login-error" role="alert">{error}</div> : null}
@@ -351,17 +460,33 @@ function LogsPanel({ page, loading, search, onSearchChange, onRefresh, result, o
 }) {
   const { locale, t } = useI18n();
   const logColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "time", label: t("Time"), defaultWidth: 170, minWidth: 130 },
-    { id: "user", label: t("User"), defaultWidth: 130, minWidth: 100 },
-    { id: "action", label: t("Action"), defaultWidth: 165, minWidth: 115 },
-    { id: "scope", label: t("Scope"), defaultWidth: 300, minWidth: 180, grow: true },
-    { id: "result", label: t("Result"), defaultWidth: 135, minWidth: 105 },
-    { id: "ip", label: t("Source IP"), defaultWidth: 145, minWidth: 115 },
+    { id: "time", label: t("Time"), defaultWidth: 145, minWidth: 130 },
+    { id: "user", label: t("User"), defaultWidth: 115, minWidth: 100 },
+    { id: "action", label: t("Action"), defaultWidth: 145, minWidth: 115 },
+    { id: "scope", label: t("Scope"), defaultWidth: 260, minWidth: 180, grow: true },
+    { id: "result", label: t("Result"), defaultWidth: 125, minWidth: 105 },
+    { id: "ip", label: t("Source IP"), defaultWidth: 130, minWidth: 115 },
   ], [t]);
   return (
     <section className="access-surface">
-      <div className="access-toolbar"><button onClick={onRefresh} disabled={loading}><RefreshCw size={13} />{loading ? t("Loading…") : t("Refresh")}</button><label><Search size={14} /><input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder={t("User, action, scope, IP…")} /></label><select value={result} onChange={(event) => onResultChange(event.target.value as LogResult)}><option value="all">{t("All results")}</option><option value="allowed">{t("Allowed")}</option><option value="denied">{t("Denied")}</option></select><button onClick={() => exportAuditLogs(page.items)}><Download size={13} />{t("Export page")}</button></div>
-      <ResizableGrid className="logs-table" storageKey="access-logs" columns={logColumns} headerClassName="logs-head">
+      <div className="access-toolbar access-logs-toolbar">
+        <button onClick={onRefresh} disabled={loading}><RefreshCw size={13} />{loading ? t("Loading…") : t("Refresh")}</button>
+        <label><Search size={14} /><input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder={t("User, action, scope, IP…")} /></label>
+        <Select
+          value={result}
+          onChange={(value) => onResultChange(value as LogResult)}
+          ariaLabel={t("Result")}
+          prefix={t("Result")}
+          size="compact"
+          options={[
+            { value: "all", label: t("All results") },
+            { value: "allowed", label: t("Allowed"), tone: "success" },
+            { value: "denied", label: t("Denied"), tone: "danger" },
+          ]}
+        />
+        <button onClick={() => exportAuditLogs(page.items)}><Download size={13} />{t("Export page")}</button>
+      </div>
+      <ResizableGrid className="logs-table" storageKey="access-logs-v2" columns={logColumns} headerClassName="logs-head">
         {page.items.map((log, index) => (
           <div className="log-row" key={`${log.requestId ?? index}-${index}`}>
             <span className="mono" data-label={t("Time")}>{formatTime(String(log.createdAt), locale)}</span><strong data-label={t("User")}>{String(log.username)}</strong><span className="mono" data-label={t("Action")}>{String(log.action)}</span><span className="mono log-scope" data-label={t("Scope")}>{String(log.scope)}</span><span className={Number(log.status) < 400 ? "log-result allowed" : "log-result denied"} data-label={t("Result")}>{Number(log.status) < 400 ? t("Allowed") : t("Denied")} · {log.status}</span><span className="mono" data-label={t("Source IP")}>{String(log.ip)}</span>
@@ -406,7 +531,17 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <header><h2 id={titleId}>{t("Add user")}</h2><button type="button" onClick={onClose} aria-label={t("Close user dialog")}><X size={18} /></button></header>
         <div className="field-pair"><label>{t("Username")}<input ref={usernameRef} value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} required /></label><label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label></div>
         <label>{t("Initial password")}<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-        <label>{t("Basic role")}<select value={role} onChange={(event) => setRole(event.target.value)}><option value="viewer">{t("Viewer — read only")}</option><option value="operator">{t("Operator — stream operations")}</option><option value="admin">{t("Admin — full access")}</option></select></label>
+        <label>{t("Basic role")}<Select
+          className="select-control--block"
+          value={role}
+          onChange={setRole}
+          ariaLabel={t("Basic role")}
+          options={[
+            { value: "viewer", label: t("Viewer"), description: t("Read-only access to permitted Redis resources"), meta: t("Read only"), tone: "neutral" },
+            { value: "operator", label: t("Operator"), description: t("Stream operations and consumer group management"), meta: t("Configured Redis resources"), tone: "info" },
+            { value: "admin", label: t("Admin"), description: t("All features including users, permissions and connections"), meta: t("Full access"), tone: "warning" },
+          ]}
+        /></label>
         <div className="role-explainer"><ShieldCheck size={15} /><span>{t("Detailed connection and stream permissions can be assigned under Resource overrides after account creation.")}</span></div>
         {error ? <div className="login-error" role="alert">{error}</div> : null}
         <footer><button type="button" onClick={onClose}>{t("Cancel")}</button><button className="primary-button" disabled={busy}>{busy ? t("Creating…") : t("Create user")}</button></footer>

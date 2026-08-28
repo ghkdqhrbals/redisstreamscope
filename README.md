@@ -27,6 +27,11 @@ Password: password
 
 Open **Settings → Redis connections**, add your Redis server, test the connection, and save it.
 
+Set `PUBLIC_URL` to the externally reachable RedisStreamScope address (for example,
+`https://streams.example.com`). Slack notifications then include a **View alert evidence**
+button and fallback URL that open the matching incident in Alerts. The same value can
+be stored as `server.publicURL` in `config.properties`.
+
 ## Features
 
 - Browse Streams, messages, payloads, and consumer groups in one workspace.
@@ -36,14 +41,11 @@ Open **Settings → Redis connections**, add your Redis server, test the connect
 - Quarantine entries to a DLQ and replay them without deleting the source message.
 - Review consumer join, leave, stalled, and recovered history alongside topology and failover events.
 - Forecast stream and Redis memory growth, then compare it with user-defined retention expectations.
-- Detect payload schema drift and follow instrumented requests across multiple streams.
-- Save multi-stream dashboards for repeatable operational views.
 - Route alerts to multiple webhooks with silences, maintenance windows, and escalation policies.
 - Follow new entries with Live tail and cursor-based pagination.
 - Add messages with optional `MAXLEN`.
 - Manage standalone, Sentinel, and Cluster connections with ACL, passwords, TLS, or mTLS.
 - Manage users, roles, detailed grants, and access logs.
-- Switch between English and Korean.
 
 ## Screenshots
 

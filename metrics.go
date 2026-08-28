@@ -21,6 +21,7 @@ const (
 	metricRawRetention       = 62 * time.Minute
 	metricRetention          = 7 * 24 * time.Hour
 	metricMaxPoints          = 600
+	metricMaxComparedStreams = 8
 )
 
 type streamMetricSample struct {
@@ -118,6 +119,24 @@ type streamMetricPoint struct {
 	PublishRate    *float64  `json:"publishRate"`
 	ConsumeRate    *float64  `json:"consumeRate"`
 	LagDelta       *float64  `json:"lagDelta"`
+}
+
+type streamComparisonMetricValue struct {
+	Entries        float64  `json:"entries"`
+	ConsumerGroups float64  `json:"consumerGroups"`
+	ConsumerCount  float64  `json:"consumerCount"`
+	TotalLag       *float64 `json:"totalLag"`
+	Pending        float64  `json:"pending"`
+	ConsumeDelayMs *float64 `json:"observedDeliveryAgeMs"`
+	RedisLatencyMs float64  `json:"redisLatencyMs"`
+	PublishRate    *float64 `json:"publishRate"`
+	ConsumeRate    *float64 `json:"consumeRate"`
+	LagDelta       *float64 `json:"lagDelta"`
+}
+
+type streamComparisonMetricPoint struct {
+	Timestamp time.Time                              `json:"timestamp"`
+	Values    map[string]streamComparisonMetricValue `json:"values"`
 }
 
 func (s *store) writeMetricSamples(ctx context.Context, samples []streamMetricSample) error {
@@ -504,19 +523,15 @@ func (s *store) maintainMetricSamples(ctx context.Context, now time.Time) error 
 	return s.maintainOperationalHistory(ctx, now)
 }
 
-func (s *store) listMetricSeries(
-	ctx context.Context,
-	connectionID string,
-	streamKey string,
-	from time.Time,
-	until time.Time,
-	maxPoints int,
-) ([]streamMetricPoint, error) {
-	if maxPoints < 1 {
+func metricBucketSettings(from, until time.Time, maxPoints int) (string, int64) {
+	if maxPoints < 2 {
 		maxPoints = metricMaxPoints
 	}
 	rangeSeconds := math.Max(1, until.Sub(from).Seconds())
-	bucketSeconds := int64(math.Ceil(rangeSeconds / float64(maxPoints)))
+	// A closed interval can intersect one more bucket than its duration alone
+	// suggests. Reserving one point guarantees the response never exceeds the
+	// advertised maximum, even when the range begins between bucket boundaries.
+	bucketSeconds := int64(math.Ceil(rangeSeconds / float64(maxPoints-1)))
 	if bucketSeconds < 1 {
 		bucketSeconds = 1
 	}
@@ -527,6 +542,18 @@ func (s *store) listMetricSeries(
 			bucketSeconds = 60
 		}
 	}
+	return table, bucketSeconds
+}
+
+func (s *store) listMetricSeries(
+	ctx context.Context,
+	connectionID string,
+	streamKey string,
+	from time.Time,
+	until time.Time,
+	maxPoints int,
+) ([]streamMetricPoint, error) {
+	table, bucketSeconds := metricBucketSettings(from, until, maxPoints)
 	where := `connection_id=? AND recorded_at>=? AND recorded_at<=?`
 	args := []any{
 		connectionID,
@@ -562,7 +589,6 @@ func (s *store) listMetricSeries(
 		buckets AS (
 			SELECT
 				CAST(sample_time / ? AS INTEGER) AS bucket,
-				MIN(sample_time) AS sample_time,
 				AVG(entries) AS entries,
 				AVG(consumer_groups) AS consumer_groups,
 				AVG(consumer_count) AS consumer_count,
@@ -576,11 +602,11 @@ func (s *store) listMetricSeries(
 			FROM snapshots
 			GROUP BY bucket
 		)
-		SELECT sample_time, entries, consumer_groups, consumer_count, total_lag,
+		SELECT bucket, entries, consumer_groups, consumer_count, total_lag,
 			pending, consume_delay_ms, redis_latency_ms, publish_rate, consume_rate,
 			lag_delta
 		FROM buckets
-		ORDER BY sample_time
+		ORDER BY bucket
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -606,7 +632,7 @@ func (s *store) listMetricSeries(
 		); err != nil {
 			return nil, err
 		}
-		point.Timestamp = time.Unix(timestamp, 0).UTC()
+		point.Timestamp = time.Unix(timestamp*bucketSeconds, 0).UTC()
 		point.TotalLag = nullFloatPointer(totalLag)
 		point.ConsumeDelayMs = nullFloatPointer(consumeDelay)
 		point.PublishRate = nullFloatPointer(publishRate)
@@ -617,6 +643,106 @@ func (s *store) listMetricSeries(
 	return items, rows.Err()
 }
 
+func (s *store) listStreamComparisonMetricSeries(
+	ctx context.Context,
+	connectionID string,
+	streamKeys []string,
+	from time.Time,
+	until time.Time,
+	maxPoints int,
+) ([]streamComparisonMetricPoint, error) {
+	if len(streamKeys) == 0 {
+		return []streamComparisonMetricPoint{}, nil
+	}
+	table, bucketSeconds := metricBucketSettings(from, until, maxPoints)
+	placeholders := make([]string, len(streamKeys))
+	args := make([]any, 0, 4+len(streamKeys))
+	args = append(args,
+		bucketSeconds,
+		connectionID,
+		from.UTC().Format(time.RFC3339Nano),
+		until.UTC().Format(time.RFC3339Nano),
+	)
+	for index, streamKey := range streamKeys {
+		placeholders[index] = "?"
+		args = append(args, streamKey)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		WITH buckets AS (
+			SELECT
+				stream_key,
+				CAST(unixepoch(recorded_at) / ? AS INTEGER) AS bucket,
+				AVG(entries) AS entries,
+				AVG(consumer_groups) AS consumer_groups,
+				AVG(consumer_count) AS consumer_count,
+				CASE WHEN MIN(lag_known)=0 THEN NULL ELSE AVG(total_lag) END AS total_lag,
+				AVG(pending) AS pending,
+				AVG(consume_delay_ms) AS consume_delay_ms,
+				AVG(redis_latency_ms) AS redis_latency_ms,
+				AVG(publish_rate) AS publish_rate,
+				AVG(consume_rate) AS consume_rate,
+				AVG(lag_delta) AS lag_delta
+			FROM `+table+`
+			WHERE connection_id=? AND recorded_at>=? AND recorded_at<=?
+				AND stream_key IN (`+strings.Join(placeholders, ",")+`)
+			GROUP BY stream_key, bucket
+		)
+		SELECT bucket, stream_key, entries, consumer_groups, consumer_count,
+			total_lag, pending, consume_delay_ms, redis_latency_ms, publish_rate,
+			consume_rate, lag_delta
+		FROM buckets
+		ORDER BY bucket, stream_key
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	pointIndexes := make(map[int64]int)
+	points := make([]streamComparisonMetricPoint, 0)
+	for rows.Next() {
+		var bucket int64
+		var streamKey string
+		var value streamComparisonMetricValue
+		var totalLag, consumeDelay, publishRate, consumeRate, lagDelta sql.NullFloat64
+		if err := rows.Scan(
+			&bucket,
+			&streamKey,
+			&value.Entries,
+			&value.ConsumerGroups,
+			&value.ConsumerCount,
+			&totalLag,
+			&value.Pending,
+			&consumeDelay,
+			&value.RedisLatencyMs,
+			&publishRate,
+			&consumeRate,
+			&lagDelta,
+		); err != nil {
+			return nil, err
+		}
+		value.TotalLag = nullFloatPointer(totalLag)
+		value.ConsumeDelayMs = nullFloatPointer(consumeDelay)
+		value.PublishRate = nullFloatPointer(publishRate)
+		value.ConsumeRate = nullFloatPointer(consumeRate)
+		value.LagDelta = nullFloatPointer(lagDelta)
+		index, exists := pointIndexes[bucket]
+		if !exists {
+			index = len(points)
+			pointIndexes[bucket] = index
+			points = append(points, streamComparisonMetricPoint{
+				Timestamp: time.Unix(bucket*bucketSeconds, 0).UTC(),
+				Values:    make(map[string]streamComparisonMetricValue),
+			})
+		}
+		points[index].Values[streamKey] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return points, nil
+}
+
 func (s *store) listConsumerGroupMetricSeries(
 	ctx context.Context,
 	connectionID string,
@@ -625,14 +751,7 @@ func (s *store) listConsumerGroupMetricSeries(
 	until time.Time,
 	maxPoints int,
 ) ([]string, []consumerGroupMetricPoint, error) {
-	if maxPoints < 1 {
-		maxPoints = metricMaxPoints
-	}
-	rangeSeconds := math.Max(1, until.Sub(from).Seconds())
-	bucketSeconds := int64(math.Ceil(rangeSeconds / float64(maxPoints)))
-	if bucketSeconds < 1 {
-		bucketSeconds = 1
-	}
+	_, bucketSeconds := metricBucketSettings(from, until, maxPoints)
 	table := "consumer_group_metric_samples"
 	if until.Sub(from) > time.Hour {
 		table = "consumer_group_metric_rollups"
@@ -645,7 +764,6 @@ func (s *store) listConsumerGroupMetricSeries(
 			SELECT
 				group_name,
 				CAST(unixepoch(recorded_at) / ? AS INTEGER) AS bucket,
-				MIN(unixepoch(recorded_at)) AS sample_time,
 				AVG(consumer_count) AS consumer_count,
 				AVG(pending) AS pending,
 				CASE WHEN MIN(lag_known)=0 THEN NULL ELSE AVG(lag) END AS lag,
@@ -656,10 +774,10 @@ func (s *store) listConsumerGroupMetricSeries(
 			WHERE connection_id=? AND stream_key=? AND recorded_at>=? AND recorded_at<=?
 			GROUP BY group_name, bucket
 		)
-		SELECT sample_time, group_name, consumer_count, pending, lag,
+		SELECT bucket, group_name, consumer_count, pending, lag,
 			consume_delay_ms, consume_rate, lag_delta
 		FROM buckets
-		ORDER BY sample_time, group_name
+		ORDER BY bucket, group_name
 	`, bucketSeconds, connectionID, streamKey, from.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, nil, err
@@ -694,7 +812,7 @@ func (s *store) listConsumerGroupMetricSeries(
 			index = len(points)
 			pointIndexes[timestamp] = index
 			points = append(points, consumerGroupMetricPoint{
-				Timestamp: time.Unix(timestamp, 0).UTC(),
+				Timestamp: time.Unix(timestamp*bucketSeconds, 0).UTC(),
 				Values:    make(map[string]consumerGroupMetricValue),
 			})
 		}
@@ -1035,6 +1153,29 @@ func metricRange(value string) (string, time.Duration, bool) {
 	}
 }
 
+func requestedComparisonStreamKeys(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, errors.New("at least one streamKey is required")
+	}
+	seen := make(map[string]struct{}, len(values))
+	keys := make([]string, 0, len(values))
+	for _, value := range values {
+		key, err := validateMonitoredStreamKey(value)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		if len(keys) == metricMaxComparedStreams {
+			return nil, fmt.Errorf("no more than %d streamKey values may be compared", metricMaxComparedStreams)
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
 func (s *apiServer) metricSeries(writer http.ResponseWriter, request *http.Request) {
 	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
 	if err != nil {
@@ -1047,8 +1188,12 @@ func (s *apiServer) metricSeries(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	streamKey := strings.TrimSpace(request.URL.Query().Get("streamKey"))
+	if !s.requireNonAdminStreamScope(writer, request, "streams:read", connection.config.ID, streamKey, "stream_scope_required") {
+		return
+	}
 	until := time.Now().UTC()
-	items, err := s.store.listMetricSeries(request.Context(), connection.config.ID, streamKey, until.Add(-duration), until, metricMaxPoints)
+	from := until.Add(-duration)
+	items, err := s.store.listMetricSeries(request.Context(), connection.config.ID, streamKey, from, until, metricMaxPoints)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "metrics_failed", "unable to load stream metrics")
 		return
@@ -1057,8 +1202,64 @@ func (s *apiServer) metricSeries(writer http.ResponseWriter, request *http.Reque
 		"connectionId":    connection.config.ID,
 		"streamKey":       streamKey,
 		"range":           rangeName,
-		"intervalSeconds": int(metricCollectionInterval.Seconds()),
+		"intervalSeconds": metricSeriesIntervalSeconds(from, until),
 		"generatedAt":     until,
+		"items":           items,
+	})
+}
+
+func metricSeriesIntervalSeconds(from, until time.Time) int64 {
+	_, bucketSeconds := metricBucketSettings(from, until, metricMaxPoints)
+	return bucketSeconds
+}
+
+func (s *apiServer) streamComparisonMetricSeries(writer http.ResponseWriter, request *http.Request) {
+	connection, err := s.redis.get(request.URL.Query().Get("connectionId"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "unknown_connection", err.Error())
+		return
+	}
+	streamKeys, err := requestedComparisonStreamKeys(request.URL.Query()["streamKey"])
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_stream_key", err.Error())
+		return
+	}
+	rangeName, duration, ok := metricRange(request.URL.Query().Get("range"))
+	if !ok {
+		writeError(writer, http.StatusBadRequest, "invalid_range", "range must be one of 1m, 5m, 15m, 1h, 6h, 24h or 7d")
+		return
+	}
+	checker, err := s.streamPermissionChecker(request, "streams:read")
+	if err != nil {
+		writePermissionCheckError(writer)
+		return
+	}
+	for _, streamKey := range streamKeys {
+		if !checker.allows("streams:read", redisStreamScope(connection.config.ID, streamKey)) {
+			writeError(writer, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
+			return
+		}
+	}
+	until := time.Now().UTC()
+	from := until.Add(-duration)
+	items, err := s.store.listStreamComparisonMetricSeries(
+		request.Context(),
+		connection.config.ID,
+		streamKeys,
+		from,
+		until,
+		metricMaxPoints,
+	)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "metrics_failed", "unable to load stream comparison metrics")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"connectionId":    connection.config.ID,
+		"range":           rangeName,
+		"intervalSeconds": metricSeriesIntervalSeconds(from, until),
+		"generatedAt":     until,
+		"streams":         streamKeys,
 		"items":           items,
 	})
 }
@@ -1080,11 +1281,12 @@ func (s *apiServer) consumerGroupMetricSeries(writer http.ResponseWriter, reques
 		return
 	}
 	until := time.Now().UTC()
+	from := until.Add(-duration)
 	groups, items, err := s.store.listConsumerGroupMetricSeries(
 		request.Context(),
 		connection.config.ID,
 		streamKey,
-		until.Add(-duration),
+		from,
 		until,
 		metricMaxPoints,
 	)
@@ -1096,7 +1298,7 @@ func (s *apiServer) consumerGroupMetricSeries(writer http.ResponseWriter, reques
 		"connectionId":    connection.config.ID,
 		"streamKey":       streamKey,
 		"range":           rangeName,
-		"intervalSeconds": int(metricCollectionInterval.Seconds()),
+		"intervalSeconds": metricSeriesIntervalSeconds(from, until),
 		"generatedAt":     until,
 		"groups":          groups,
 		"items":           items,

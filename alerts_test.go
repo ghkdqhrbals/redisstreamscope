@@ -137,6 +137,244 @@ func TestAlertRuleJSONDoesNotExposeWebhookSecret(t *testing.T) {
 	}
 }
 
+func TestFormatAlertWebhookPayloadPreservesGenericV1Contract(t *testing.T) {
+	notification := alertWebhookNotificationFixture()
+	notification.DestinationFormat = ""
+	defaultPayload, err := formatAlertWebhookPayload(notification, notification.DestinationFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitPayload, err := formatAlertWebhookPayload(notification, alertWebhookFormatWebhook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(defaultPayload) != string(explicitPayload) {
+		t.Fatalf("default webhook payload changed: default=%s explicit=%s", defaultPayload, explicitPayload)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(defaultPayload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	expectedKeys := map[string]bool{
+		"version": true, "event": true, "sentAt": true, "rule": true, "incident": true,
+		"observation": true, "effectiveSeverity": true, "routeId": true, "deliveryGroupId": true,
+	}
+	if len(payload) != len(expectedKeys) {
+		t.Fatalf("generic v1 top-level keys changed: %s", defaultPayload)
+	}
+	for key := range expectedKeys {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("generic v1 payload is missing %q: %s", key, defaultPayload)
+		}
+	}
+	var rule map[string]json.RawMessage
+	if err := json.Unmarshal(payload["rule"], &rule); err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := rule["webhookFormat"]; leaked {
+		t.Fatalf("delivery format leaked into generic v1 rule contract: %s", payload["rule"])
+	}
+	text := string(defaultPayload)
+	for _, secret := range []string{"https://hooks.example/secret", "destinationFormat", "destinationUrl", "dedup-key", "job-1"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("internal webhook state %q leaked: %s", secret, text)
+		}
+	}
+}
+
+func TestFormatSlackAlertWebhookPayloadIncludesFallbackAndBlocks(t *testing.T) {
+	notification := alertWebhookNotificationFixture()
+	notification.DestinationFormat = alertWebhookFormatSlack
+	payload, err := formatAlertWebhookPayload(notification, notification.DestinationFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Text   string           `json:"text"`
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(decoded.Text) == "" || len(decoded.Blocks) < 3 {
+		t.Fatalf("Slack payload lacks fallback text or blocks: %s", payload)
+	}
+	text := string(payload)
+	for _, expected := range []string{"orders lag", "critical", "firing", alertMetricConsumerGroupLag, "orders", "workers", "42", "incident-1"} {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(expected)) {
+			t.Fatalf("Slack payload is missing %q: %s", expected, payload)
+		}
+	}
+	if strings.Contains(text, "https://hooks.example/secret") {
+		t.Fatalf("Slack webhook secret leaked: %s", payload)
+	}
+	if strings.Contains(text, "View alert evidence") || strings.Contains(text, `"type":"button"`) {
+		t.Fatalf("Slack payload included evidence controls without a configured public URL: %s", payload)
+	}
+	if _, err := formatAlertWebhookPayload(notification, "teams"); err == nil {
+		t.Fatal("unsupported webhook format was accepted")
+	}
+}
+
+func TestFormatSlackAlertWebhookPayloadIncludesEvidenceLink(t *testing.T) {
+	notification := alertWebhookNotificationFixture()
+	notification.DestinationFormat = alertWebhookFormatSlack
+	notification.EvidenceURL = "https://scope.example.com/?page=alerts&incident=incident-1"
+	payload, err := formatAlertWebhookPayload(notification, notification.DestinationFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Text   string `json:"text"`
+		Blocks []struct {
+			Type     string `json:"type"`
+			Elements []struct {
+				Type string          `json:"type"`
+				URL  string          `json:"url"`
+				Text json.RawMessage `json:"text"`
+			} `json:"elements"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(decoded.Text, notification.EvidenceURL) {
+		t.Fatalf("Slack fallback text lacks evidence URL: %s", decoded.Text)
+	}
+	foundButton := false
+	for _, block := range decoded.Blocks {
+		if block.Type != "actions" {
+			continue
+		}
+		for _, element := range block.Elements {
+			var label struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(element.Text, &label)
+			if element.Type == "button" && element.URL == notification.EvidenceURL && label.Text == "View alert evidence" {
+				foundButton = true
+			}
+		}
+	}
+	if !foundButton {
+		t.Fatalf("Slack payload lacks View alert evidence URL button: %s", payload)
+	}
+}
+
+func TestAlertEvidenceURL(t *testing.T) {
+	if got := alertEvidenceURL("https://scope.example.com", "incident /1"); got != "https://scope.example.com/?page=alerts&incident=incident+%2F1" {
+		t.Fatalf("evidence URL = %q", got)
+	}
+	if got := alertEvidenceURL("", "incident-1"); got != "" {
+		t.Fatalf("unset public URL generated evidence link %q", got)
+	}
+	if got := alertEvidenceURL("https://scope.example.com", ""); got != "" {
+		t.Fatalf("empty incident generated evidence link %q", got)
+	}
+}
+
+func TestAlertIncidentByIDReturnsEnvelopeAndHidesDeniedResources(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	dataStore, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataStore.close()
+	ctx := context.Background()
+	enabled := true
+	rule, err := dataStore.createAlertRule(ctx, alertRuleInput{
+		Name: "orders lag", Metric: alertMetricConsumerGroupLag, Operator: ">", Threshold: 10,
+		ConnectionID: "redis", StreamKey: "orders", GroupName: "workers", Severity: "critical", Enabled: &enabled,
+	}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
+	incidentID := "incident-detail-1"
+	if _, err := dataStore.db.ExecContext(ctx, `INSERT INTO alert_incidents(
+		id,rule_id,status,started_at,updated_at,trigger_value,last_value,summary
+	) VALUES(?,?,?,?,?,?,?,?)`, incidentID, rule.ID, alertIncidentFiring,
+		formatAlertTime(now), formatAlertTime(now), 20, 42, "Consumer group lag is above threshold."); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := hashPassword("viewer-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := dataStore.createUser(ctx, "incident-viewer", "Incident Viewer", hash, "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataStore.upsertGrant(ctx, grantRecord{
+		UserID: viewer.ID, Action: "alerts:read", Scope: redisStreamScope("redis", "orders"), Effect: "deny",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &apiServer{store: dataStore}
+	request := func(id string, session sessionRecord) *http.Request {
+		item := httptest.NewRequest(http.MethodGet, "/api/alert-incidents/"+id, nil)
+		item.SetPathValue("id", id)
+		return item.WithContext(context.WithValue(item.Context(), sessionContextKey, session))
+	}
+
+	found := httptest.NewRecorder()
+	server.alertIncidentByID(found, request(incidentID, sessionRecord{Role: "admin"}))
+	if found.Code != http.StatusOK {
+		t.Fatalf("found status=%d body=%s", found.Code, found.Body.String())
+	}
+	var payload struct {
+		Item alertIncident `json:"item"`
+	}
+	if err := json.Unmarshal(found.Body.Bytes(), &payload); err != nil || payload.Item.ID != incidentID {
+		t.Fatalf("incident envelope=%+v err=%v", payload, err)
+	}
+
+	denied := httptest.NewRecorder()
+	server.alertIncidentByID(denied, request(incidentID, sessionRecord{UserID: viewer.ID, Role: "viewer"}))
+	missing := httptest.NewRecorder()
+	server.alertIncidentByID(missing, request("missing-incident", sessionRecord{Role: "admin"}))
+	if denied.Code != http.StatusNotFound || missing.Code != http.StatusNotFound || denied.Body.String() != missing.Body.String() {
+		t.Fatalf("denied and missing responses differ: denied=%d %s missing=%d %s",
+			denied.Code, denied.Body.String(), missing.Code, missing.Body.String())
+	}
+}
+
+func TestAlertWebhookTestRejectsUnsupportedFormat(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/alert-webhooks/test", strings.NewReader(`{"url":"https://8.8.8.8/hook","format":"teams"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	(&apiServer{}).testAlertWebhook(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "webhook format") {
+		t.Fatalf("unsupported format response=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func alertWebhookNotificationFixture() alertNotification {
+	now := time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC)
+	return alertNotification{
+		Event: "firing", SentAt: now, EffectiveSeverity: "critical", RouteID: "route-1",
+		DeliveryGroupID: "delivery-group-1", DedupKey: "dedup-key", JobID: "job-1",
+		DestinationURL: "https://hooks.example/secret",
+		Rule: alertRule{
+			ID: "rule-1", Name: "orders lag", Metric: alertMetricConsumerGroupLag, Operator: ">",
+			Threshold: 10, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers",
+			ForSeconds: 30, CooldownSeconds: 300, Severity: "critical", Enabled: true,
+			WebhookURL: "https://hooks.example/secret", WebhookConfigured: true, WebhookFormat: alertWebhookFormatSlack,
+			CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Minute),
+		},
+		Incident: alertIncident{
+			ID: "incident-1", RuleID: "rule-1", RuleName: "orders lag", Metric: alertMetricConsumerGroupLag,
+			Severity: "critical", Status: alertIncidentFiring, ConnectionID: "redis", StreamKey: "orders",
+			GroupName: "workers", StartedAt: now.Add(-time.Minute), UpdatedAt: now,
+			TriggerValue: 20, LastValue: 42, Summary: "Consumer group lag is above threshold.",
+		},
+		Observation: alertObservation{
+			Metric: alertMetricConsumerGroupLag, ConnectionID: "redis", StreamKey: "orders", GroupName: "workers",
+			Value: 42, Available: true, ObservedAt: now,
+		},
+	}
+}
+
 func TestSafeWebhookClientDoesNotFollowRedirectsAndLimitsResponse(t *testing.T) {
 	var redirected atomic.Int32
 	mux := http.NewServeMux()
@@ -189,6 +427,20 @@ func TestWebhookDispatcherEnqueueIsBoundedAndNonBlocking(t *testing.T) {
 	}
 }
 
+func TestWebhookDispatcherAddsConfiguredEvidenceURL(t *testing.T) {
+	dispatcher := newAlertWebhookDispatcher(nil, nil, 1, 1)
+	dispatcher.publicURL = "https://scope.example.com"
+	notification := alertWebhookNotificationFixture()
+	if !dispatcher.Enqueue(notification) {
+		t.Fatal("notification was not enqueued")
+	}
+	queued := <-dispatcher.queue
+	want := "https://scope.example.com/?page=alerts&incident=incident-1"
+	if queued.EvidenceURL != want {
+		t.Fatalf("queued evidence URL = %q, want %q", queued.EvidenceURL, want)
+	}
+}
+
 type capturedAlertNotifications struct {
 	mu    sync.Mutex
 	items []alertNotification
@@ -230,6 +482,7 @@ func TestAlertServicePersistsIncidentAcknowledgementAndResolution(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	service.publicURL = "https://scope.example.com"
 	start := time.Date(2026, 8, 25, 3, 0, 0, 0, time.UTC)
 	bad := alertObservation{
 		Metric: alertMetricConsumerGroupLag, ConnectionID: "redis", StreamKey: "orders",
@@ -274,6 +527,12 @@ func TestAlertServicePersistsIncidentAcknowledgementAndResolution(t *testing.T) 
 	notifications := sink.snapshot()
 	if len(notifications) != 2 || notifications[0].Event != "firing" || notifications[1].Event != "resolved" {
 		t.Fatalf("notifications=%+v", notifications)
+	}
+	for _, notification := range notifications {
+		want := "https://scope.example.com/?page=alerts&incident=" + notification.Incident.ID
+		if notification.EvidenceURL != want {
+			t.Fatalf("notification evidence URL = %q, want %q", notification.EvidenceURL, want)
+		}
 	}
 	views, err := store.listAlertRuleViews(ctx)
 	if err != nil || len(views) != 1 || views[0].State != alertStateNormal || views[0].LastValue == nil || *views[0].LastValue != 1 {

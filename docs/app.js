@@ -1,68 +1,20 @@
-const languageButtons = document.querySelectorAll("[data-language]");
-const translatedElements = document.querySelectorAll("[data-en][data-ko]");
-const translatedImages = document.querySelectorAll("[data-alt-en][data-alt-ko]");
 const copyButtons = document.querySelectorAll("[data-copy]");
 const showcaseTabs = document.querySelectorAll("[data-showcase-tab]");
 const showcasePanels = document.querySelectorAll("[data-showcase-panel]");
-
-const languageStorageKey = "redisstreamscope-docs-language";
-const legacyLanguageStorageKey = "streamscope-docs-language";
-const savedLanguage = localStorage.getItem(languageStorageKey) ?? localStorage.getItem(legacyLanguageStorageKey);
-if (savedLanguage !== null && localStorage.getItem(languageStorageKey) === null) {
-  localStorage.setItem(languageStorageKey, savedLanguage);
-  localStorage.removeItem(legacyLanguageStorageKey);
-}
-const initialLanguage = savedLanguage === "ko" ? "ko" : "en";
-let activeLanguage = initialLanguage;
-
-function setLanguage(language) {
-  activeLanguage = language === "ko" ? "ko" : "en";
-  document.documentElement.lang = activeLanguage;
-  document.title =
-    activeLanguage === "ko"
-      ? "RedisStreamScope — Redis Streams 콘솔"
-      : "RedisStreamScope — Redis Streams Console";
-
-  translatedElements.forEach((element) => {
-    element.textContent = element.dataset[activeLanguage];
-  });
-
-  translatedImages.forEach((image) => {
-    image.alt = image.dataset[`alt${activeLanguage === "ko" ? "Ko" : "En"}`];
-  });
-
-  languageButtons.forEach((button) => {
-    button.setAttribute(
-      "aria-pressed",
-      String(button.dataset.language === activeLanguage),
-    );
-  });
-
-  localStorage.setItem(languageStorageKey, activeLanguage);
-}
-
-languageButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    setLanguage(button.dataset.language);
-  });
-});
 
 copyButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(button.dataset.copy);
       button.dataset.state = "copied";
-      button.textContent =
-        activeLanguage === "ko"
-          ? button.dataset.copiedKo
-          : button.dataset.copiedEn;
+      button.textContent = "Copied";
 
       window.setTimeout(() => {
         button.dataset.state = "";
-        button.textContent = button.dataset[activeLanguage];
+        button.textContent = "Copy";
       }, 1600);
     } catch {
-      button.textContent = button.dataset[activeLanguage];
+      button.textContent = "Copy";
     }
   });
 });
@@ -83,5 +35,3 @@ showcaseTabs.forEach((tab) => {
     });
   });
 });
-
-setLanguage(initialLanguage);

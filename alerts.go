@@ -45,6 +45,9 @@ const (
 	alertIncidentFiring       = "firing"
 	alertIncidentAcknowledged = "acknowledged"
 	alertIncidentResolved     = "resolved"
+
+	alertWebhookFormatWebhook = "webhook"
+	alertWebhookFormatSlack   = "slack"
 )
 
 var supportedAlertMetrics = map[string]struct{}{
@@ -106,6 +109,7 @@ type alertRule struct {
 	Enabled           bool      `json:"enabled"`
 	WebhookURL        string    `json:"-"`
 	WebhookConfigured bool      `json:"webhookConfigured"`
+	WebhookFormat     string    `json:"webhookFormat"`
 	CreatedBy         string    `json:"createdBy,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -124,6 +128,7 @@ type alertRuleInput struct {
 	Severity        string  `json:"severity"`
 	Enabled         *bool   `json:"enabled,omitempty"`
 	WebhookURL      string  `json:"webhookUrl,omitempty"`
+	WebhookFormat   string  `json:"webhookFormat,omitempty"`
 }
 
 type alertIncident struct {
@@ -409,6 +414,7 @@ func initAlertSchema(ctx context.Context, s *store) error {
 			severity TEXT NOT NULL DEFAULT 'warning',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			webhook_url TEXT NOT NULL DEFAULT '',
+			webhook_format TEXT NOT NULL DEFAULT 'webhook',
 			created_by TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -506,6 +512,24 @@ func normalizeAlertRule(input alertRuleInput) alertRule {
 		Enabled:           enabled,
 		WebhookURL:        strings.TrimSpace(input.WebhookURL),
 		WebhookConfigured: strings.TrimSpace(input.WebhookURL) != "",
+		WebhookFormat:     normalizeAlertWebhookFormat(input.WebhookFormat),
+	}
+}
+
+func normalizeAlertWebhookFormat(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return alertWebhookFormatWebhook
+	}
+	return value
+}
+
+func validateAlertWebhookFormat(value string) error {
+	switch normalizeAlertWebhookFormat(value) {
+	case alertWebhookFormatWebhook, alertWebhookFormatSlack:
+		return nil
+	default:
+		return errors.New("webhook format must be webhook or slack")
 	}
 }
 
@@ -544,6 +568,9 @@ func validateAlertRule(rule alertRule) error {
 	if len(rule.WebhookURL) > 2048 {
 		return errors.New("webhookUrl is too long")
 	}
+	if err := validateAlertWebhookFormat(rule.WebhookFormat); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -574,11 +601,11 @@ func (s *store) createAlertRule(ctx context.Context, input alertRuleInput, creat
 	_, err = transaction.ExecContext(ctx, `
 		INSERT INTO alert_rules(
 			id,name,metric,operator,threshold,connection_id,stream_key,group_name,
-			for_seconds,cooldown_seconds,severity,enabled,webhook_url,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			for_seconds,cooldown_seconds,severity,enabled,webhook_url,webhook_format,created_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rule.ID, rule.Name, rule.Metric, rule.Operator, rule.Threshold,
 		rule.ConnectionID, rule.StreamKey, rule.GroupName, rule.ForSeconds,
-		rule.CooldownSeconds, rule.Severity, boolInt(rule.Enabled), rule.WebhookURL,
+		rule.CooldownSeconds, rule.Severity, boolInt(rule.Enabled), rule.WebhookURL, rule.WebhookFormat,
 		rule.CreatedBy, formatAlertTime(rule.CreatedAt), formatAlertTime(rule.UpdatedAt))
 	if err != nil {
 		return alertRule{}, err
@@ -598,7 +625,7 @@ func (s *store) listAlertRules(ctx context.Context) ([]alertRule, error) {
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,name,metric,operator,threshold,connection_id,stream_key,group_name,
-			for_seconds,cooldown_seconds,severity,enabled,webhook_url,created_by,created_at,updated_at
+			for_seconds,cooldown_seconds,severity,enabled,webhook_url,webhook_format,created_by,created_at,updated_at
 		FROM alert_rules WHERE deleted_at IS NULL
 		ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
 			name COLLATE NOCASE,id`)
@@ -623,7 +650,7 @@ func (s *store) getAlertRule(ctx context.Context, id string) (alertRule, error) 
 	}
 	return scanAlertRule(s.db.QueryRowContext(ctx, `
 		SELECT id,name,metric,operator,threshold,connection_id,stream_key,group_name,
-			for_seconds,cooldown_seconds,severity,enabled,webhook_url,created_by,created_at,updated_at
+			for_seconds,cooldown_seconds,severity,enabled,webhook_url,webhook_format,created_by,created_at,updated_at
 		FROM alert_rules WHERE id=? AND deleted_at IS NULL`, id))
 }
 
@@ -638,7 +665,7 @@ func scanAlertRule(scanner alertRuleScanner) (alertRule, error) {
 	err := scanner.Scan(
 		&rule.ID, &rule.Name, &rule.Metric, &rule.Operator, &rule.Threshold,
 		&rule.ConnectionID, &rule.StreamKey, &rule.GroupName, &rule.ForSeconds,
-		&rule.CooldownSeconds, &rule.Severity, &enabled, &rule.WebhookURL,
+		&rule.CooldownSeconds, &rule.Severity, &enabled, &rule.WebhookURL, &rule.WebhookFormat,
 		&rule.CreatedBy, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -646,6 +673,7 @@ func scanAlertRule(scanner alertRuleScanner) (alertRule, error) {
 	}
 	rule.Enabled = enabled == 1
 	rule.WebhookConfigured = rule.WebhookURL != ""
+	rule.WebhookFormat = normalizeAlertWebhookFormat(rule.WebhookFormat)
 	rule.CreatedAt = parseAlertTime(createdAt)
 	rule.UpdatedAt = parseAlertTime(updatedAt)
 	return rule, nil
@@ -677,11 +705,11 @@ func (s *store) updateAlertRule(ctx context.Context, id string, input alertRuleI
 	defer transaction.Rollback()
 	result, err := transaction.ExecContext(ctx, `
 		UPDATE alert_rules SET name=?,metric=?,operator=?,threshold=?,connection_id=?,stream_key=?,group_name=?,
-			for_seconds=?,cooldown_seconds=?,severity=?,enabled=?,webhook_url=?,updated_at=?
+			for_seconds=?,cooldown_seconds=?,severity=?,enabled=?,webhook_url=?,webhook_format=?,updated_at=?
 		WHERE id=?`,
 		rule.Name, rule.Metric, rule.Operator, rule.Threshold, rule.ConnectionID,
 		rule.StreamKey, rule.GroupName, rule.ForSeconds, rule.CooldownSeconds,
-		rule.Severity, boolInt(rule.Enabled), rule.WebhookURL,
+		rule.Severity, boolInt(rule.Enabled), rule.WebhookURL, rule.WebhookFormat,
 		formatAlertTime(rule.UpdatedAt), rule.ID)
 	if err != nil {
 		return alertRule{}, err
@@ -1156,6 +1184,8 @@ type alertNotification struct {
 	DedupKey           string           `json:"dedupKey,omitempty"`
 	EscalationPolicyID string           `json:"escalationPolicyId,omitempty"`
 	EscalationStepID   string           `json:"escalationStepId,omitempty"`
+	DestinationFormat  string           `json:"destinationFormat,omitempty"`
+	EvidenceURL        string           `json:"evidenceUrl,omitempty"`
 	DestinationURL     string           `json:"-"`
 	JobID              string           `json:"-"`
 }
@@ -1174,6 +1204,7 @@ type durableAlertNotificationSink interface {
 type alertService struct {
 	store               *store
 	notifier            alertNotificationSink
+	publicURL           string
 	evaluateMu          sync.Mutex
 	operationsStartOnce sync.Once
 }
@@ -1183,15 +1214,21 @@ type alertServiceOptions struct {
 	WebhookWorkers   int
 	WebhookTimeout   time.Duration
 	WebhookPolicy    webhookURLPolicy
+	PublicURL        string
 }
 
 func newAlertService(s *store, options alertServiceOptions) (*alertService, *alertWebhookDispatcher, error) {
 	if err := initAlertSchema(context.Background(), s); err != nil {
 		return nil, nil, err
 	}
+	publicURL, err := normalizePublicURL(options.PublicURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid alert service public URL: %w", err)
+	}
 	client := newSafeWebhookClient(options.WebhookTimeout, options.WebhookPolicy)
 	dispatcher := newAlertWebhookDispatcher(s, client, options.WebhookQueueSize, options.WebhookWorkers)
-	return &alertService{store: s, notifier: dispatcher}, dispatcher, nil
+	dispatcher.publicURL = publicURL
+	return &alertService{store: s, notifier: dispatcher, publicURL: publicURL}, dispatcher, nil
 }
 
 func newAlertServiceWithNotifier(s *store, notifier alertNotificationSink) (*alertService, error) {
@@ -1348,9 +1385,26 @@ func (s *alertService) evaluateRule(ctx context.Context, rule alertRule, observa
 		notification = &alertNotification{
 			Event: decision.NotifyEvent, SentAt: now, Rule: rule,
 			Incident: incident, Observation: observation,
+			EvidenceURL: alertEvidenceURL(s.publicURL, incident.ID),
 		}
 	}
 	return notification, nil
+}
+
+func alertEvidenceURL(publicURL, incidentID string) string {
+	if strings.TrimSpace(publicURL) == "" || strings.TrimSpace(incidentID) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(publicURL)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	parsed.RawQuery = "page=alerts&incident=" + url.QueryEscape(incidentID)
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func loadAlertEvaluationState(ctx context.Context, transaction *sql.Tx, ruleID string) (alertEvaluationState, error) {
@@ -1689,9 +1743,155 @@ func (client *safeWebhookClient) Send(ctx context.Context, rawURL string, payloa
 	return response.StatusCode, nil
 }
 
+func formatAlertWebhookPayload(notification alertNotification, format string) ([]byte, error) {
+	switch normalizeAlertWebhookFormat(format) {
+	case alertWebhookFormatWebhook:
+		return json.Marshal(alertWebhookV1Payload(notification))
+	case alertWebhookFormatSlack:
+		return json.Marshal(alertSlackPayload(notification))
+	default:
+		return nil, errors.New("webhook format must be webhook or slack")
+	}
+}
+
+func alertWebhookV1Payload(notification alertNotification) map[string]any {
+	payload := map[string]any{
+		"version": "1", "event": notification.Event, "sentAt": notification.SentAt,
+		"rule": alertWebhookRuleV1From(notification.Rule), "incident": notification.Incident,
+		"observation": notification.Observation,
+	}
+	if notification.JobID != "" {
+		// These fields have always been part of durable v1 deliveries. Keep them
+		// conditional so the legacy in-memory sink contract remains unchanged.
+		payload["effectiveSeverity"] = notification.EffectiveSeverity
+		payload["routeId"] = notification.RouteID
+		payload["deliveryGroupId"] = notification.DeliveryGroupID
+	}
+	return payload
+}
+
+type alertWebhookRuleV1 struct {
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Metric            string    `json:"metric"`
+	Operator          string    `json:"operator"`
+	Threshold         float64   `json:"threshold"`
+	ConnectionID      string    `json:"connectionId,omitempty"`
+	StreamKey         string    `json:"streamKey,omitempty"`
+	GroupName         string    `json:"groupName,omitempty"`
+	ForSeconds        int64     `json:"forSeconds"`
+	CooldownSeconds   int64     `json:"cooldownSeconds"`
+	Severity          string    `json:"severity"`
+	Enabled           bool      `json:"enabled"`
+	WebhookConfigured bool      `json:"webhookConfigured"`
+	CreatedBy         string    `json:"createdBy,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+func alertWebhookRuleV1From(rule alertRule) alertWebhookRuleV1 {
+	return alertWebhookRuleV1{
+		ID: rule.ID, Name: rule.Name, Metric: rule.Metric, Operator: rule.Operator,
+		Threshold: rule.Threshold, ConnectionID: rule.ConnectionID, StreamKey: rule.StreamKey,
+		GroupName: rule.GroupName, ForSeconds: rule.ForSeconds, CooldownSeconds: rule.CooldownSeconds,
+		Severity: rule.Severity, Enabled: rule.Enabled, WebhookConfigured: rule.WebhookConfigured,
+		CreatedBy: rule.CreatedBy, CreatedAt: rule.CreatedAt, UpdatedAt: rule.UpdatedAt,
+	}
+}
+
+func alertSlackPayload(notification alertNotification) map[string]any {
+	severity := strings.TrimSpace(notification.EffectiveSeverity)
+	if severity == "" {
+		severity = strings.TrimSpace(notification.Rule.Severity)
+	}
+	if severity == "" {
+		severity = "info"
+	}
+	event := strings.TrimSpace(notification.Event)
+	if event == "" {
+		event = "alert"
+	}
+	ruleName := strings.TrimSpace(notification.Rule.Name)
+	if ruleName == "" {
+		ruleName = "RedisStreamScope alert"
+	}
+	summary := strings.TrimSpace(notification.Incident.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("%s %s %s", notification.Rule.Metric, notification.Rule.Operator,
+			strconv.FormatFloat(notification.Rule.Threshold, 'f', -1, 64))
+	}
+	fallback := fmt.Sprintf("[%s] %s — %s: %s", strings.ToUpper(severity), ruleName, strings.ToUpper(event), summary)
+	evidenceURL := strings.TrimSpace(notification.EvidenceURL)
+	if evidenceURL != "" {
+		fallback += " • Evidence: " + evidenceURL
+	}
+	header := truncateSlackText(fmt.Sprintf("[%s] %s", strings.ToUpper(severity), ruleName), 150)
+	fields := []map[string]any{
+		{"type": "mrkdwn", "text": fmt.Sprintf("*Event*\n`%s`", escapeSlackMrkdwn(event))},
+		{"type": "mrkdwn", "text": fmt.Sprintf("*Severity*\n`%s`", escapeSlackMrkdwn(severity))},
+		{"type": "mrkdwn", "text": fmt.Sprintf("*Metric*\n`%s`", escapeSlackMrkdwn(notification.Rule.Metric))},
+		{"type": "mrkdwn", "text": fmt.Sprintf("*Observed / threshold*\n`%s` / `%s %s`",
+			strconv.FormatFloat(notification.Observation.Value, 'f', -1, 64), escapeSlackMrkdwn(notification.Rule.Operator),
+			strconv.FormatFloat(notification.Rule.Threshold, 'f', -1, 64))},
+	}
+	if scope := alertSlackScope(notification); scope != "" {
+		fields = append(fields, map[string]any{"type": "mrkdwn", "text": "*Scope*\n" + scope})
+	}
+	if notification.Incident.ID != "" {
+		fields = append(fields, map[string]any{"type": "mrkdwn", "text": "*Incident*\n`" + escapeSlackMrkdwn(notification.Incident.ID) + "`"})
+	}
+	blocks := []map[string]any{
+		{"type": "header", "text": map[string]any{"type": "plain_text", "text": header}},
+		{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": escapeSlackMrkdwn(summary)}},
+		{"type": "section", "fields": fields},
+	}
+	if evidenceURL != "" {
+		blocks = append(blocks, map[string]any{
+			"type": "actions",
+			"elements": []map[string]any{{
+				"type": "button", "action_id": "view_incident_evidence", "url": evidenceURL,
+				"text": map[string]any{"type": "plain_text", "text": "View alert evidence"},
+			}},
+		})
+	}
+	blocks = append(blocks, map[string]any{"type": "context", "elements": []map[string]any{{"type": "mrkdwn", "text": fmt.Sprintf("RedisStreamScope • %s", notification.SentAt.UTC().Format(time.RFC3339))}}})
+	return map[string]any{"text": truncateSlackText(fallback, 2000), "blocks": blocks}
+}
+
+func alertSlackScope(notification alertNotification) string {
+	connectionID, streamKey, groupName := alertNotificationScope(notification)
+	parts := make([]string, 0, 3)
+	for _, item := range []struct {
+		label string
+		value string
+	}{{"connection", connectionID}, {"stream", streamKey}, {"group", groupName}} {
+		if strings.TrimSpace(item.value) != "" {
+			parts = append(parts, fmt.Sprintf("*%s:* `%s`", item.label, escapeSlackMrkdwn(item.value)))
+		}
+	}
+	return strings.Join(parts, "  •  ")
+}
+
+func escapeSlackMrkdwn(value string) string {
+	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	return replacer.Replace(value)
+}
+
+func truncateSlackText(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
+}
+
 type alertWebhookDispatcher struct {
 	store     *store
 	sender    alertWebhookSender
+	publicURL string
 	queue     chan alertNotification
 	workers   int
 	startOnce sync.Once
@@ -1745,6 +1945,16 @@ func (dispatcher *alertWebhookDispatcher) EnqueueDurable(ctx context.Context, no
 	}
 	if notification.DestinationURL == "" {
 		return false, errors.New("notification destination is required")
+	}
+	if notification.DestinationFormat == "" {
+		notification.DestinationFormat = notification.Rule.WebhookFormat
+	}
+	notification.DestinationFormat = normalizeAlertWebhookFormat(notification.DestinationFormat)
+	if err := validateAlertWebhookFormat(notification.DestinationFormat); err != nil {
+		return false, err
+	}
+	if notification.EvidenceURL == "" {
+		notification.EvidenceURL = alertEvidenceURL(dispatcher.publicURL, notification.Incident.ID)
 	}
 	if dispatcher.store != nil {
 		reserved, inserted, err := dispatcher.store.reserveAlertNotificationJob(ctx, notification, time.Now().UTC())
@@ -1830,11 +2040,7 @@ func (dispatcher *alertWebhookDispatcher) deliver(ctx context.Context, notificat
 	if dispatcher.sender == nil {
 		return
 	}
-	payload, err := json.Marshal(map[string]any{
-		"version": "1", "event": notification.Event, "sentAt": notification.SentAt,
-		"rule": notification.Rule, "incident": notification.Incident,
-		"observation": notification.Observation,
-	})
+	payload, err := formatAlertWebhookPayload(notification, notification.DestinationFormat)
 	if err != nil {
 		return
 	}
@@ -1859,12 +2065,7 @@ func (dispatcher *alertWebhookDispatcher) deliver(ctx context.Context, notificat
 	if job.DestinationURL == "" {
 		return
 	}
-	if jobPayload, marshalErr := json.Marshal(map[string]any{
-		"version": "1", "event": job.Notification.Event, "sentAt": job.Notification.SentAt,
-		"rule": job.Notification.Rule, "incident": job.Notification.Incident,
-		"observation": job.Notification.Observation, "effectiveSeverity": job.Notification.EffectiveSeverity,
-		"routeId": job.Notification.RouteID, "deliveryGroupId": job.Notification.DeliveryGroupID,
-	}); marshalErr == nil {
+	if jobPayload, marshalErr := formatAlertWebhookPayload(job.Notification, job.Notification.DestinationFormat); marshalErr == nil {
 		payload = jobPayload
 	}
 	if ctx.Err() != nil {
@@ -1976,7 +2177,7 @@ func (s *store) listAlertRuleViews(ctx context.Context) ([]alertRuleView, error)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id,r.name,r.metric,r.operator,r.threshold,r.connection_id,r.stream_key,r.group_name,
-			r.for_seconds,r.cooldown_seconds,r.severity,r.enabled,r.webhook_url,r.created_by,r.created_at,r.updated_at,
+			r.for_seconds,r.cooldown_seconds,r.severity,r.enabled,r.webhook_url,r.webhook_format,r.created_by,r.created_at,r.updated_at,
 			COALESCE(st.status,'normal'),st.condition_since,st.last_evaluated_at,st.last_observed_at,
 			st.last_value,st.last_transition_at,st.last_notification_at
 		FROM alert_rules r LEFT JOIN alert_rule_states st ON st.rule_id=r.id
@@ -1997,7 +2198,7 @@ func (s *store) listAlertRuleViews(ctx context.Context) ([]alertRuleView, error)
 		if err := rows.Scan(
 			&item.ID, &item.Name, &item.Metric, &item.Operator, &item.Threshold,
 			&item.ConnectionID, &item.StreamKey, &item.GroupName, &item.ForSeconds,
-			&item.CooldownSeconds, &item.Severity, &enabled, &item.WebhookURL,
+			&item.CooldownSeconds, &item.Severity, &enabled, &item.WebhookURL, &item.WebhookFormat,
 			&item.CreatedBy, &createdAt, &updatedAt, &item.State, &conditionSince,
 			&lastEvaluatedAt, &lastObservedAt, &lastValue, &lastTransitionAt, &lastNotificationAt,
 		); err != nil {
@@ -2005,6 +2206,7 @@ func (s *store) listAlertRuleViews(ctx context.Context) ([]alertRuleView, error)
 		}
 		item.Enabled = enabled == 1
 		item.WebhookConfigured = item.WebhookURL != ""
+		item.WebhookFormat = normalizeAlertWebhookFormat(item.WebhookFormat)
 		item.CreatedAt, item.UpdatedAt = parseAlertTime(createdAt), parseAlertTime(updatedAt)
 		item.ConditionSince = scanNullableAlertTime(conditionSince)
 		item.LastEvaluatedAt = scanNullableAlertTime(lastEvaluatedAt)
@@ -2072,6 +2274,7 @@ type alertRulePatch struct {
 	Severity        *string  `json:"severity,omitempty"`
 	Enabled         *bool    `json:"enabled,omitempty"`
 	WebhookURL      *string  `json:"webhookUrl,omitempty"`
+	WebhookFormat   *string  `json:"webhookFormat,omitempty"`
 }
 
 func inputFromAlertRule(rule alertRule) alertRuleInput {
@@ -2080,7 +2283,7 @@ func inputFromAlertRule(rule alertRule) alertRuleInput {
 		Name: rule.Name, Metric: rule.Metric, Operator: rule.Operator, Threshold: rule.Threshold,
 		ConnectionID: rule.ConnectionID, StreamKey: rule.StreamKey, GroupName: rule.GroupName,
 		ForSeconds: rule.ForSeconds, CooldownSeconds: rule.CooldownSeconds,
-		Severity: rule.Severity, Enabled: &enabled, WebhookURL: rule.WebhookURL,
+		Severity: rule.Severity, Enabled: &enabled, WebhookURL: rule.WebhookURL, WebhookFormat: rule.WebhookFormat,
 	}
 }
 
@@ -2120,6 +2323,9 @@ func applyAlertRulePatch(input *alertRuleInput, patch alertRulePatch) {
 	}
 	if patch.WebhookURL != nil {
 		input.WebhookURL = *patch.WebhookURL
+	}
+	if patch.WebhookFormat != nil {
+		input.WebhookFormat = *patch.WebhookFormat
 	}
 }
 
@@ -2257,6 +2463,29 @@ func (s *apiServer) alertIncidents(writer http.ResponseWriter, request *http.Req
 	writeJSON(writer, http.StatusOK, map[string]any{"items": items, "summary": summary})
 }
 
+func (s *apiServer) alertIncidentByID(writer http.ResponseWriter, request *http.Request) {
+	id := strings.TrimSpace(request.PathValue("id"))
+	if id == "" {
+		writeError(writer, http.StatusBadRequest, "invalid_request", "Alert incident ID is required.")
+		return
+	}
+	checker, err := s.store.permissionChecker(request.Context(), requestSession(request), "alerts:read")
+	if err != nil {
+		writePermissionCheckError(writer)
+		return
+	}
+	item, err := s.store.getAlertIncident(request.Context(), id)
+	if err != nil {
+		writeAlertHandlerError(writer, err)
+		return
+	}
+	if !alertResourceVisible(checker, "alerts:read", item.Metric, item.ConnectionID, item.StreamKey) {
+		writeError(writer, http.StatusNotFound, "not_found", "Alert resource was not found.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"item": item})
+}
+
 func (s *apiServer) acknowledgeAlertIncident(writer http.ResponseWriter, request *http.Request) {
 	id := strings.TrimSpace(request.PathValue("id"))
 	session, _ := request.Context().Value(sessionContextKey).(sessionRecord)
@@ -2271,16 +2500,46 @@ func (s *apiServer) acknowledgeAlertIncident(writer http.ResponseWriter, request
 func (s *apiServer) testAlertWebhook(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		URL     string         `json:"url"`
+		Format  string         `json:"format,omitempty"`
 		Payload map[string]any `json:"payload,omitempty"`
 	}
 	if err := readJSON(request, &input, 64<<10); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if input.Payload == nil {
-		input.Payload = map[string]any{"event": "test", "sentAt": time.Now().UTC(), "source": "RedisStreamScope"}
+	format := normalizeAlertWebhookFormat(input.Format)
+	if err := validateAlertWebhookFormat(format); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
 	}
-	payload, err := json.Marshal(input.Payload)
+	var payload []byte
+	var err error
+	if input.Payload != nil {
+		// Retain the advanced generic test contract for API clients that supply
+		// their own payload. The product UI omits payload and exercises the same
+		// formatter used by production deliveries.
+		payload, err = json.Marshal(input.Payload)
+	} else {
+		now := time.Now().UTC()
+		notification := alertNotification{
+			Event: "test", SentAt: now, EffectiveSeverity: "info", DestinationFormat: format,
+			Rule: alertRule{
+				ID: "test-rule", Name: "Webhook delivery test", Metric: alertMetricConsumerGroupLag,
+				Operator: ">", Threshold: 100, Severity: "info", Enabled: true,
+				WebhookConfigured: true, WebhookFormat: format, CreatedAt: now, UpdatedAt: now,
+			},
+			Incident: alertIncident{
+				ID: "test-incident", RuleID: "test-rule", RuleName: "Webhook delivery test",
+				Metric: alertMetricConsumerGroupLag, Severity: "info", Status: alertIncidentFiring,
+				StartedAt: now, UpdatedAt: now, TriggerValue: 125, LastValue: 125,
+				Summary: "RedisStreamScope webhook test delivery.",
+			},
+			Observation: alertObservation{
+				Metric: alertMetricConsumerGroupLag, Value: 125, Available: true, ObservedAt: now,
+			},
+		}
+		payload, err = formatAlertWebhookPayload(notification, format)
+	}
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", "Webhook payload is invalid.")
 		return
@@ -2291,7 +2550,7 @@ func (s *apiServer) testAlertWebhook(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadGateway, "webhook_failed", err.Error())
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"status": "delivered", "statusCode": status})
+	writeJSON(writer, http.StatusOK, map[string]any{"status": "delivered", "statusCode": status, "format": format})
 }
 
 func (s *apiServer) alertWebhookDeliveries(writer http.ResponseWriter, request *http.Request) {

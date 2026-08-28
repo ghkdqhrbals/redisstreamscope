@@ -110,6 +110,7 @@ func (s *apiServer) routes() {
 	s.mux.Handle("GET /api/connections", s.protect("connections:read", s.connections))
 	s.mux.Handle("GET /api/overview", s.protect("streams:read", s.overview))
 	s.mux.Handle("GET /api/metrics/timeseries", s.protect("streams:read", s.metricSeries))
+	s.mux.Handle("GET /api/metrics/streams", s.protect("streams:read", s.streamComparisonMetricSeries))
 	s.mux.Handle("GET /api/metrics/consumer-groups", s.protect("groups:read", s.consumerGroupMetricSeries))
 	s.mux.Handle("GET /api/metrics/consumer-groups/latest", s.protect("groups:read", s.latestConsumerGroupMetrics))
 	s.mux.Handle("GET /api/operations/snapshot", s.protect("streams:read", s.operationsSnapshot))
@@ -157,6 +158,7 @@ func (s *apiServer) routes() {
 	s.mux.Handle("PATCH /api/alert-rules/{id}", s.protect("alerts:write", s.alertRuleByID))
 	s.mux.Handle("DELETE /api/alert-rules/{id}", s.protect("alerts:write", s.alertRuleByID))
 	s.mux.Handle("GET /api/alert-incidents", s.protect("alerts:read", s.alertIncidents))
+	s.mux.Handle("GET /api/alert-incidents/{id}", s.protect("alerts:read", s.alertIncidentByID))
 	s.mux.Handle("POST /api/alert-incidents/{id}/ack", s.protect("alerts:write", s.acknowledgeAlertIncident))
 	s.mux.Handle("POST /api/alert-webhooks/test", s.protect("alerts:write", s.testAlertWebhook))
 	s.mux.Handle("GET /api/alert-webhook-deliveries", s.protect("alerts:read", s.alertWebhookDeliveries))
@@ -216,7 +218,7 @@ func (s *apiServer) protect(action string, next http.HandlerFunc) http.Handler {
 		recorder := &statusWriter{ResponseWriter: writer, status: http.StatusOK}
 		session, err := s.auth.session(request)
 		if err != nil {
-			writeError(recorder, http.StatusUnauthorized, "authentication_required", "로그인이 필요합니다.")
+			writeError(recorder, http.StatusUnauthorized, "authentication_required", "Sign-in is required.")
 			s.writeRequestAccessLog(accessLog{
 				Method: request.Method, Path: request.URL.Path, Action: action, Scope: requestScope(request),
 				Status: recorder.status, Duration: time.Since(start), IP: requestIP(request),
@@ -226,7 +228,7 @@ func (s *apiServer) protect(action string, next http.HandlerFunc) http.Handler {
 		}
 		scope := requestScope(request)
 		if session.PasswordChangeRequired && request.URL.Path != "/api/me/password" {
-			writeError(recorder, http.StatusForbidden, "password_change_required", "계속하려면 초기 비밀번호를 변경해야 합니다.")
+			writeError(recorder, http.StatusForbidden, "password_change_required", "Change the initial password to continue.")
 			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
@@ -237,12 +239,12 @@ func (s *apiServer) protect(action string, next http.HandlerFunc) http.Handler {
 			return
 		}
 		if !checker.allows(action, scope) {
-			writeError(recorder, http.StatusForbidden, "permission_denied", "이 작업을 수행할 권한이 없습니다.")
+			writeError(recorder, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
 		if request.Method != http.MethodGet && !validOrigin(request) {
-			writeError(recorder, http.StatusForbidden, "invalid_origin", "요청 출처를 확인할 수 없습니다.")
+			writeError(recorder, http.StatusForbidden, "invalid_origin", "The request origin could not be verified.")
 			s.writeRequestAccessLog(makeAccessLog(request, session, action, scope, recorder.status, time.Since(start), requestID))
 			return
 		}
@@ -287,7 +289,7 @@ func (s *apiServer) healthReady(writer http.ResponseWriter, request *http.Reques
 func (s *apiServer) setupStatus(writer http.ResponseWriter, request *http.Request) {
 	configured, err := s.store.hasUsers(request.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "설정 상태를 확인하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to check setup status.")
 		return
 	}
 	connections := make([]map[string]any, 0, len(s.config.Connections))
@@ -306,15 +308,15 @@ func (s *apiServer) setupStatus(writer http.ResponseWriter, request *http.Reques
 func (s *apiServer) setupTestRedis(writer http.ResponseWriter, request *http.Request) {
 	configured, err := s.store.hasUsers(request.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "설정 상태를 확인하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to check setup status.")
 		return
 	}
 	if configured {
-		writeError(writer, http.StatusForbidden, "setup_complete", "초기 설정이 이미 완료되었습니다.")
+		writeError(writer, http.StatusForbidden, "setup_complete", "Initial setup has already been completed.")
 		return
 	}
 	if !validOrigin(request) {
-		writeError(writer, http.StatusForbidden, "invalid_origin", "요청 출처를 확인할 수 없습니다.")
+		writeError(writer, http.StatusForbidden, "invalid_origin", "The request origin could not be verified.")
 		return
 	}
 	s.testRedisInput(writer, request)
@@ -323,15 +325,15 @@ func (s *apiServer) setupTestRedis(writer http.ResponseWriter, request *http.Req
 func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 	configured, err := s.store.hasUsers(request.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "설정 상태를 확인하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to check setup status.")
 		return
 	}
 	if configured {
-		writeError(writer, http.StatusConflict, "setup_complete", "초기 설정이 이미 완료되었습니다.")
+		writeError(writer, http.StatusConflict, "setup_complete", "Initial setup has already been completed.")
 		return
 	}
 	if !validOrigin(request) {
-		writeError(writer, http.StatusForbidden, "invalid_origin", "요청 출처를 확인할 수 없습니다.")
+		writeError(writer, http.StatusForbidden, "invalid_origin", "The request origin could not be verified.")
 		return
 	}
 	var input struct {
@@ -347,11 +349,11 @@ func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if len(strings.TrimSpace(input.Admin.Username)) < 3 || strings.TrimSpace(input.Admin.DisplayName) == "" || !passwordProvided(input.Admin.Password) {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "관리자 이름은 3자 이상이어야 하며 표시 이름과 비밀번호는 필수입니다.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "The administrator username must be at least 3 characters, and display name and password are required.")
 		return
 	}
 	if len(input.Connections) == 0 {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "Redis 연결을 하나 이상 추가하세요.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "Add at least one Redis connection.")
 		return
 	}
 	connections, err := mergeConnectionInputs(input.Connections, s.config.Connections)
@@ -367,11 +369,11 @@ func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 	}
 	passwordHash, err := hashPassword(input.Admin.Password)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "password_error", "관리자 비밀번호를 처리하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "password_error", "Unable to process the administrator password.")
 		return
 	}
 	if err := savePropertiesConfig(s.config.ConfigPath, nextConfig); err != nil {
-		writeError(writer, http.StatusInternalServerError, "config_write_failed", "config.properties를 저장하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "config_write_failed", "Unable to save config.properties.")
 		return
 	}
 	if err := s.redis.reload(nextConfig); err != nil {
@@ -386,7 +388,7 @@ func (s *apiServer) setup(writer http.ResponseWriter, request *http.Request) {
 	}
 	token, expires, err := s.store.createSession(request.Context(), user, s.config.SessionTTL, requestIP(request), request.UserAgent())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "session_error", "관리자 세션을 만들지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "session_error", "Unable to create the administrator session.")
 		return
 	}
 	s.auth.setCookie(writer, token, expires)
@@ -417,7 +419,7 @@ func (s *apiServer) session(writer http.ResponseWriter, request *http.Request) {
 
 func (s *apiServer) login(writer http.ResponseWriter, request *http.Request) {
 	if !s.auth.allowLogin(request) {
-		writeError(writer, http.StatusTooManyRequests, "rate_limited", "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.")
+		writeError(writer, http.StatusTooManyRequests, "rate_limited", "Too many sign-in attempts. Try again shortly.")
 		return
 	}
 	var input struct {
@@ -431,7 +433,7 @@ func (s *apiServer) login(writer http.ResponseWriter, request *http.Request) {
 	user, token, expires, err := s.auth.login(request.Context(), strings.TrimSpace(input.Username), input.Password, requestIP(request), request.UserAgent())
 	if err != nil {
 		s.store.writeAccessLog(request.Context(), accessLog{Username: input.Username, Method: request.Method, Path: request.URL.Path, Action: "auth:login", Scope: "app", Status: http.StatusUnauthorized, IP: requestIP(request), UserAgent: request.UserAgent(), RequestID: newRequestID()})
-		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "The username or password is incorrect.")
 		return
 	}
 	s.auth.resetAttempts(request)
@@ -446,7 +448,7 @@ func (s *apiServer) login(writer http.ResponseWriter, request *http.Request) {
 
 func (s *apiServer) logout(writer http.ResponseWriter, request *http.Request) {
 	if !validOrigin(request) {
-		writeError(writer, http.StatusForbidden, "invalid_origin", "요청 출처를 확인할 수 없습니다.")
+		writeError(writer, http.StatusForbidden, "invalid_origin", "The request origin could not be verified.")
 		return
 	}
 	session, sessionErr := s.auth.session(request)
@@ -469,30 +471,30 @@ func (s *apiServer) changePassword(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if !passwordProvided(input.NewPassword) {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "새 비밀번호를 입력하세요.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "Enter a new password.")
 		return
 	}
 	if input.CurrentPassword == input.NewPassword {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "새 비밀번호는 현재 비밀번호와 달라야 합니다.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "The new password must differ from the current password.")
 		return
 	}
 	user, currentHash, err := s.store.authenticate(request.Context(), session.Username)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(input.CurrentPassword)) != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid_current_password", "현재 비밀번호가 올바르지 않습니다.")
+		writeError(writer, http.StatusUnauthorized, "invalid_current_password", "The current password is incorrect.")
 		return
 	}
 	passwordHash, err := hashPassword(input.NewPassword)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "password_error", "비밀번호를 처리하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "password_error", "Unable to process the password.")
 		return
 	}
 	if err := s.store.changeOwnPassword(request.Context(), session.UserID, passwordHash); err != nil {
-		writeError(writer, http.StatusInternalServerError, "password_update_failed", "비밀번호를 변경하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "password_update_failed", "Unable to change the password.")
 		return
 	}
 	token, expires, err := s.store.createSession(request.Context(), user, s.config.SessionTTL, requestIP(request), request.UserAgent())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "session_error", "새 세션을 만들지 못했습니다. 다시 로그인하세요.")
+		writeError(writer, http.StatusInternalServerError, "session_error", "Unable to create a new session. Sign in again.")
 		return
 	}
 	s.auth.setCookie(writer, token, expires)
@@ -514,11 +516,11 @@ func (s *apiServer) changeUsername(writer http.ResponseWriter, request *http.Req
 	}
 	_, currentHash, err := s.store.authenticate(request.Context(), session.Username)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(input.CurrentPassword)) != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid_current_password", "현재 비밀번호가 올바르지 않습니다.")
+		writeError(writer, http.StatusUnauthorized, "invalid_current_password", "The current password is incorrect.")
 		return
 	}
 	if err := s.store.changeOwnUsername(request.Context(), session.UserID, input.Username); err != nil {
-		writeError(writer, http.StatusConflict, "username_update_failed", "사용자 이름을 변경하지 못했습니다.")
+		writeError(writer, http.StatusConflict, "username_update_failed", "Unable to change the username.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"ok": true, "username": strings.TrimSpace(input.Username)})
@@ -573,7 +575,7 @@ func (s *apiServer) updateSettings(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if err := savePropertiesConfig(s.config.ConfigPath, nextConfig); err != nil {
-		writeError(writer, http.StatusInternalServerError, "config_write_failed", "config.properties를 저장하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "config_write_failed", "Unable to save config.properties.")
 		return
 	}
 	if err := s.redis.reload(nextConfig); err != nil {
@@ -1350,7 +1352,7 @@ func (s *apiServer) action(writer http.ResponseWriter, request *http.Request) {
 	exactScope := "stream:" + connection.config.ID + ":" + input.Key
 	if !s.store.allowed(request.Context(), session, requiredPermission, exactScope) {
 		s.store.writeAccessLog(request.Context(), makeAccessLog(request, session, input.Action, exactScope, http.StatusForbidden, 0, newRequestID()))
-		writeError(writer, http.StatusForbidden, "permission_denied", "이 Redis resource에 대한 작업 권한이 없습니다.")
+		writeError(writer, http.StatusForbidden, "permission_denied", "You do not have permission for this Redis resource.")
 		return
 	}
 	var result any
@@ -1410,7 +1412,7 @@ func (s *apiServer) action(writer http.ResponseWriter, request *http.Request) {
 		}
 		result, err = connection.client.XGroupDestroy(request.Context(), input.Key, input.Group).Result()
 	default:
-		writeError(writer, http.StatusBadRequest, "unknown_action", "지원하지 않는 작업입니다.")
+		writeError(writer, http.StatusBadRequest, "unknown_action", "This action is not supported.")
 		return
 	}
 	if err != nil {
@@ -1444,7 +1446,7 @@ func newXAddArgs(stream, id string, fields map[string]string, maxLen int64, exac
 func (s *apiServer) users(writer http.ResponseWriter, request *http.Request) {
 	users, err := s.store.listUsers(request.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "사용자 목록을 불러오지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to load the user list.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"items": users})
@@ -1462,17 +1464,17 @@ func (s *apiServer) createUser(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	if len(strings.TrimSpace(input.Username)) < 3 || strings.TrimSpace(input.DisplayName) == "" || !passwordProvided(input.Password) {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "사용자 이름은 3자 이상이어야 하며 표시 이름과 비밀번호는 필수입니다.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "The username must be at least 3 characters, and display name and password are required.")
 		return
 	}
 	hash, err := hashPassword(input.Password)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "password_error", "비밀번호를 처리하지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "password_error", "Unable to process the password.")
 		return
 	}
 	user, err := s.store.createUser(request.Context(), input.Username, input.DisplayName, hash, input.Role)
 	if err != nil {
-		writeError(writer, http.StatusConflict, "user_exists", "사용자를 생성하지 못했습니다.")
+		writeError(writer, http.StatusConflict, "user_exists", "Unable to create the user.")
 		return
 	}
 	writeJSON(writer, http.StatusCreated, user)
@@ -1495,21 +1497,21 @@ func (s *apiServer) updateUser(writer http.ResponseWriter, request *http.Request
 		var err error
 		passwordHash, err = hashPassword(input.Password)
 		if err != nil {
-			writeError(writer, http.StatusInternalServerError, "password_error", "비밀번호를 처리하지 못했습니다.")
+			writeError(writer, http.StatusInternalServerError, "password_error", "Unable to process the password.")
 			return
 		}
 	}
 	if len(strings.TrimSpace(input.Username)) < 3 || strings.TrimSpace(input.DisplayName) == "" {
-		writeError(writer, http.StatusBadRequest, "validation_failed", "사용자 이름은 3자 이상이고 표시 이름은 비어 있지 않아야 합니다.")
+		writeError(writer, http.StatusBadRequest, "validation_failed", "The username must be at least 3 characters and the display name cannot be empty.")
 		return
 	}
 	user, err := s.store.updateUser(request.Context(), request.PathValue("id"), input.Username, input.DisplayName, input.Role, input.Enabled, passwordHash)
 	if err != nil {
 		status := http.StatusBadRequest
-		message := "사용자를 수정하지 못했습니다."
+		message := "Unable to update the user."
 		if strings.Contains(err.Error(), "enabled administrator") {
 			status = http.StatusConflict
-			message = "활성화된 관리자는 최소 한 명 이상이어야 합니다."
+			message = "At least one administrator must remain enabled."
 		}
 		writeError(writer, status, "update_failed", message)
 		return
@@ -1532,7 +1534,7 @@ func (s *apiServer) accessLogs(writer http.ResponseWriter, request *http.Request
 		Result: result,
 	})
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "접근 로그를 불러오지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to load access logs.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
@@ -1561,7 +1563,7 @@ func (s *apiServer) roles(writer http.ResponseWriter, _ *http.Request) {
 func (s *apiServer) grants(writer http.ResponseWriter, request *http.Request) {
 	items, err := s.store.listGrants(request.Context(), request.URL.Query().Get("userId"))
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "database_error", "권한 목록을 불러오지 못했습니다.")
+		writeError(writer, http.StatusInternalServerError, "database_error", "Unable to load permissions.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"items": items})
@@ -1584,11 +1586,11 @@ func (s *apiServer) upsertGrant(writer http.ResponseWriter, request *http.Reques
 func (s *apiServer) deleteGrant(writer http.ResponseWriter, request *http.Request) {
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(writer, http.StatusBadRequest, "invalid_grant", "grant id가 올바르지 않습니다.")
+		writeError(writer, http.StatusBadRequest, "invalid_grant", "The grant ID is invalid.")
 		return
 	}
 	if err := s.store.deleteGrant(request.Context(), id); err != nil {
-		writeError(writer, http.StatusNotFound, "grant_not_found", "권한을 찾을 수 없습니다.")
+		writeError(writer, http.StatusNotFound, "grant_not_found", "The permission could not be found.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"ok": true})
@@ -1597,7 +1599,7 @@ func (s *apiServer) deleteGrant(writer http.ResponseWriter, request *http.Reques
 func (s *apiServer) updateGrant(writer http.ResponseWriter, request *http.Request) {
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(writer, http.StatusBadRequest, "invalid_grant", "grant id가 올바르지 않습니다.")
+		writeError(writer, http.StatusBadRequest, "invalid_grant", "The grant ID is invalid.")
 		return
 	}
 	var input grantRecord
@@ -1607,7 +1609,7 @@ func (s *apiServer) updateGrant(writer http.ResponseWriter, request *http.Reques
 	}
 	grant, err := s.store.updateGrant(request.Context(), id, input)
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "grant_update_failed", "권한을 변경하지 못했습니다.")
+		writeError(writer, http.StatusBadRequest, "grant_update_failed", "Unable to update the permission.")
 		return
 	}
 	writeJSON(writer, http.StatusOK, grant)
