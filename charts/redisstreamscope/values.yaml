@@ -1,0 +1,144 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ghkdqhrbals/redisstreamscope
+  pullPolicy: IfNotPresent
+  # Defaults to the chart appVersion when empty.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: redisstreamscope.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+  # Prevent Helm uninstall from deleting the application database and settings.
+  retain: true
+
+config:
+  # Set this to the externally reachable root URL so Slack evidence links work.
+  publicURL: ""
+  secureCookies: false
+  sessionTTL: 12h
+
+initialAdmin:
+  username: admin
+  displayName: System Administrator
+  # When empty, the chart creates a Secret with a random 32-character password.
+  existingSecret: ""
+  passwordKey: password
+
+# Redis is external to this chart. Leave all three connection sources empty to
+# configure Redis in the browser. Otherwise set exactly one of host, url, or nodes.
+redis:
+  host: ""
+  port: 6379
+  url: ""
+  nodes: []
+  id: default
+  name: Redis
+  mode: standalone
+  masterName: ""
+  username: ""
+  database: 0
+  keyPattern: "*"
+  auth:
+    # The password is mounted as a file and is never copied into Helm values.
+    existingSecret: ""
+    passwordKey: password
+  tls:
+    enabled: false
+    serverName: ""
+    existingSecret: ""
+    caKey: ""
+    certKey: ""
+    keyKey: ""
+
+metrics:
+  # When configured, /metrics requires this Secret value as a bearer token.
+  existingSecret: ""
+  tokenKey: token
+
+probes:
+  startup:
+    enabled: true
+    path: /health/live
+    periodSeconds: 2
+    failureThreshold: 30
+  liveness:
+    enabled: true
+    path: /health/live
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    # Use /health/ready only when Redis is preconfigured. It returns 503 before
+    # the first Redis connection exists, which would block the setup UI.
+    path: /health/live
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+terminationGracePeriodSeconds: 30
+revisionHistoryLimit: 3
+
+extraEnv: []
+extraEnvFrom: []
+extraVolumes: []
+extraVolumeMounts: []

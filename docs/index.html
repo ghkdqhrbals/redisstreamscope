@@ -68,11 +68,11 @@
             Redis Streams needed a proper monitoring UI.
           </h1>
           <p class="hero-description">
-            We could not find a monitoring UI made specifically for Redis Streams, so we built RedisStreamScope. Start it with one Docker command, then connect Redis in the browser.
+            We could not find a monitoring UI made specifically for Redis Streams, so we built RedisStreamScope. Start it with Docker or Helm, then connect Redis in the browser.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#quick-start">
-              Run with Docker
+              Install RedisStreamScope
             </a>
             <a
               class="button button-secondary"
@@ -259,13 +259,29 @@
             <span>1</span>
             <div>
               <h3>Start RedisStreamScope</h3>
-              <div class="code-row">
-                <code>docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest</code>
-                <button
-                  class="copy-button"
-                  type="button"
-                  data-copy="docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest"
-                >Copy</button>
+              <div class="install-options">
+                <div>
+                  <p class="install-method">Docker</p>
+                  <div class="code-row">
+                    <code>docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest</code>
+                    <button
+                      class="copy-button"
+                      type="button"
+                      data-copy="docker run -d --name redisstreamscope -p 8080:8080 -v redisstreamscope-data:/data ghcr.io/ghkdqhrbals/redisstreamscope:latest"
+                    >Copy</button>
+                  </div>
+                </div>
+                <div>
+                  <p class="install-method">Kubernetes with Helm</p>
+                  <div class="code-row">
+                    <code>helm upgrade --install redisstreamscope oci://ghcr.io/ghkdqhrbals/charts/redisstreamscope --namespace redisstreamscope --create-namespace</code>
+                    <button
+                      class="copy-button"
+                      type="button"
+                      data-copy="helm upgrade --install redisstreamscope oci://ghcr.io/ghkdqhrbals/charts/redisstreamscope --namespace redisstreamscope --create-namespace"
+                    >Copy</button>
+                  </div>
+                </div>
               </div>
             </div>
           </article>
@@ -273,7 +289,28 @@
             <span>2</span>
             <div>
               <h3>Sign in</h3>
-              <p><a href="http://localhost:8080">http://localhost:8080</a> · <code>admin / password</code></p>
+              <p><a href="http://localhost:8080">http://localhost:8080</a></p>
+              <p class="install-method">Docker</p>
+              <p><code>admin / password</code></p>
+              <p class="install-method">Helm without Ingress</p>
+              <div class="code-row">
+                <code>kubectl --namespace redisstreamscope port-forward service/redisstreamscope 8080:80</code>
+                <button
+                  class="copy-button"
+                  type="button"
+                  data-copy="kubectl --namespace redisstreamscope port-forward service/redisstreamscope 8080:80"
+                >Copy</button>
+              </div>
+              <p class="install-method">Helm initial password</p>
+              <div class="code-row">
+                <code>helm get notes redisstreamscope --namespace redisstreamscope</code>
+                <button
+                  class="copy-button"
+                  type="button"
+                  data-copy="helm get notes redisstreamscope --namespace redisstreamscope"
+                >Copy</button>
+              </div>
+              <p>Helm requires a new administrator password after the first sign-in.</p>
             </div>
           </article>
           <article class="step">

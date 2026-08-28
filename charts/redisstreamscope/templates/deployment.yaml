@@ -1,0 +1,247 @@
+{{- include "redisstreamscope.validateValues" . }}
+{{- $redisConfigured := or .Values.redis.host .Values.redis.url (gt (len .Values.redis.nodes) 0) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "redisstreamscope.fullname" . | quote }}
+  labels:
+    {{- include "redisstreamscope.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "redisstreamscope.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "redisstreamscope.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "redisstreamscope.serviceAccountName" . | quote }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name | quote }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.containerPort | quote }}
+            - name: SESSION_TTL
+              value: {{ .Values.config.sessionTTL | quote }}
+            - name: SECURE_COOKIES
+              value: {{ .Values.config.secureCookies | quote }}
+            - name: INITIAL_ADMIN_USERNAME
+              value: {{ .Values.initialAdmin.username | quote }}
+            - name: INITIAL_ADMIN_DISPLAY_NAME
+              value: {{ .Values.initialAdmin.displayName | quote }}
+            - name: INITIAL_ADMIN_PASSWORD_FILE
+              value: /run/secrets/redisstreamscope/initial-admin/password
+            {{- with .Values.config.publicURL }}
+            - name: PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.metrics.existingSecret }}
+            - name: METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $.Values.metrics.tokenKey | quote }}
+            {{- end }}
+            {{- if $redisConfigured }}
+            {{- if .Values.redis.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            {{- else if .Values.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- else }}
+            - name: REDIS_NODES
+              value: {{ join "," .Values.redis.nodes | quote }}
+            {{- end }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_ID
+              value: {{ .Values.redis.id | quote }}
+            - name: REDIS_NAME
+              value: {{ .Values.redis.name | quote }}
+            - name: REDIS_MODE
+              value: {{ .Values.redis.mode | quote }}
+            - name: REDIS_DATABASE
+              value: {{ .Values.redis.database | quote }}
+            - name: REDIS_KEY_PATTERN
+              value: {{ .Values.redis.keyPattern | quote }}
+            - name: REDIS_TLS
+              value: {{ .Values.redis.tls.enabled | quote }}
+            {{- with .Values.redis.masterName }}
+            - name: REDIS_MASTER_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.redis.username }}
+            - name: REDIS_USERNAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.redis.auth.existingSecret }}
+            - name: REDIS_PASSWORD_FILE
+              value: /run/secrets/redisstreamscope/redis-password/password
+            {{- end }}
+            {{- with .Values.redis.tls.serverName }}
+            - name: REDIS_TLS_SERVER_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.redis.tls.caKey }}
+            - name: REDIS_TLS_CA_FILE
+              value: /run/secrets/redisstreamscope/redis-tls/ca.crt
+            {{- end }}
+            {{- if .Values.redis.tls.certKey }}
+            - name: REDIS_TLS_CERT_FILE
+              value: /run/secrets/redisstreamscope/redis-tls/tls.crt
+            - name: REDIS_TLS_KEY_FILE
+              value: /run/secrets/redisstreamscope/redis-tls/tls.key
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path | quote }}
+              port: "http"
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path | quote }}
+              port: "http"
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path | quote }}
+              port: "http"
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: initial-admin
+              mountPath: /run/secrets/redisstreamscope/initial-admin
+              readOnly: true
+            {{- if and $redisConfigured .Values.redis.auth.existingSecret }}
+            - name: redis-password
+              mountPath: /run/secrets/redisstreamscope/redis-password
+              readOnly: true
+            {{- end }}
+            {{- if and $redisConfigured .Values.redis.tls.existingSecret }}
+            - name: redis-tls
+              mountPath: /run/secrets/redisstreamscope/redis-tls
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "redisstreamscope.fullname" .) | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: initial-admin
+          secret:
+            secretName: {{ include "redisstreamscope.initialAdminSecretName" . | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.initialAdmin.passwordKey | quote }}
+                path: password
+        {{- if and $redisConfigured .Values.redis.auth.existingSecret }}
+        - name: redis-password
+          secret:
+            secretName: {{ .Values.redis.auth.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.redis.auth.passwordKey | quote }}
+                path: password
+        {{- end }}
+        {{- if and $redisConfigured .Values.redis.tls.existingSecret }}
+        - name: redis-tls
+          secret:
+            secretName: {{ .Values.redis.tls.existingSecret | quote }}
+            defaultMode: 0440
+            {{- if or .Values.redis.tls.caKey .Values.redis.tls.certKey .Values.redis.tls.keyKey }}
+            items:
+              {{- with .Values.redis.tls.caKey }}
+              - key: {{ . | quote }}
+                path: ca.crt
+              {{- end }}
+              {{- with .Values.redis.tls.certKey }}
+              - key: {{ . | quote }}
+                path: tls.crt
+              {{- end }}
+              {{- with .Values.redis.tls.keyKey }}
+              - key: {{ . | quote }}
+                path: tls.key
+              {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -455,12 +455,40 @@ h3 {
   font-weight: 750;
 }
 
+.step > div {
+  min-width: 0;
+}
+
 .step h3 {
   margin-bottom: 8px;
 }
 
+.install-options {
+  display: grid;
+  gap: 16px;
+}
+
+.install-options > div {
+  min-width: 0;
+}
+
+.step .install-method {
+  margin: 14px 0 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.install-options .install-method {
+  margin-top: 0;
+}
+
 .code-row {
+  width: 100%;
   max-width: 680px;
+  min-width: 0;
   min-height: 46px;
   padding: 7px 8px 7px 14px;
   border: 1px solid var(--border);
@@ -474,9 +502,15 @@ h3 {
 }
 
 .code-row code {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow-x: auto;
   white-space: nowrap;
   font-size: 14px;
+}
+
+.code-row .copy-button {
+  flex: 0 0 auto;
 }
 
 footer {

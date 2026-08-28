@@ -10,6 +10,8 @@ RedisStreamScope is for developers and operators who want to inspect Redis Strea
 
 ## Quick start
 
+### Docker
+
 ```sh
 docker run -d \
   --name redisstreamscope \
@@ -18,7 +20,29 @@ docker run -d \
   ghcr.io/ghkdqhrbals/redisstreamscope:latest
 ```
 
-Open [http://localhost:8080](http://localhost:8080) and sign in:
+### Kubernetes with Helm
+
+```sh
+helm upgrade --install redisstreamscope \
+  oci://ghcr.io/ghkdqhrbals/charts/redisstreamscope \
+  --namespace redisstreamscope \
+  --create-namespace
+
+kubectl --namespace redisstreamscope \
+  port-forward service/redisstreamscope 8080:80
+```
+
+The chart creates a retained persistent volume for the application database and
+settings, plus a random initial administrator password stored in a Kubernetes
+Secret. Run `helm get notes redisstreamscope --namespace redisstreamscope` to
+retrieve the sign-in command. The administrator must change that password on
+the first sign-in.
+
+Redis remains external and can be configured in the browser or with Helm values.
+See the [chart documentation](./charts/redisstreamscope/README.md) for Ingress,
+existing Secret, TLS, and storage examples.
+
+For Docker, open [http://localhost:8080](http://localhost:8080) and sign in:
 
 ```text
 Username: admin

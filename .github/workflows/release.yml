@@ -1,4 +1,4 @@
-name: Release container image
+name: Release container image and Helm chart
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           SELECTED_REF: ${{ github.ref }}
         run: |
           if [[ "$SELECTED_REF" != "refs/heads/main" ]]; then
-            echo "Container releases must be requested from the main branch."
+            echo "RedisStreamScope releases must be requested from the main branch."
             exit 1
           fi
 
@@ -110,6 +110,8 @@ jobs:
         run: |
           npm version "$VERSION" --no-git-tag-version
           printf '%s\n' "$VERSION" > VERSION
+          sed -i -E "s/^version: .*/version: $VERSION/" charts/redisstreamscope/Chart.yaml
+          sed -i -E "s/^appVersion: .*/appVersion: \"$VERSION\"/" charts/redisstreamscope/Chart.yaml
 
       - name: Install web dependencies
         run: npm ci
@@ -126,6 +128,29 @@ jobs:
       - name: Run Go tests
         run: go test -count=1 ./...
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.21.4
+
+      - name: Validate and package Helm chart
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          chart_version=$(helm show chart charts/redisstreamscope | awk '$1 == "version:" { print $2 }')
+          app_version=$(helm show chart charts/redisstreamscope | awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2 }')
+          if [[ "$chart_version" != "$VERSION" || "$app_version" != "$VERSION" ]]; then
+            echo "Helm chart version and appVersion must match release version $VERSION."
+            exit 1
+          fi
+
+          helm lint charts/redisstreamscope --strict
+          helm template redisstreamscope charts/redisstreamscope \
+            --namespace redisstreamscope \
+            > /tmp/redisstreamscope.yaml
+          mkdir -p dist/charts
+          helm package charts/redisstreamscope --destination dist/charts
+
       - name: Prepare release commit
         id: release-commit
         env:
@@ -133,7 +158,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION package.json package-lock.json
+          git add VERSION package.json package-lock.json charts/redisstreamscope/Chart.yaml
           git commit -m "Release v$VERSION"
           git tag -a "v$VERSION" -m "RedisStreamScope v$VERSION"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -175,6 +200,20 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
 
+      - name: Sign in Helm to GitHub Container Registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish and verify Helm chart
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          chart_registry="oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          helm push "dist/charts/redisstreamscope-$VERSION.tgz" "$chart_registry"
+          helm registry logout ghcr.io
+          helm show chart "$chart_registry/redisstreamscope" --version "$VERSION"
+
       - name: Publish version commit and tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -184,7 +223,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "v$VERSION" --verify-tag --title "RedisStreamScope v$VERSION" --generate-notes
+        run: |
+          gh release create "v$VERSION" \
+            "dist/charts/redisstreamscope-$VERSION.tgz" \
+            --verify-tag \
+            --title "RedisStreamScope v$VERSION" \
+            --generate-notes
 
       - name: Write release summary
         env:
@@ -193,12 +237,13 @@ jobs:
           IMAGE: ${{ steps.version.outputs.image }}
         run: |
           {
-            echo "## RedisStreamScope container release"
+            echo "## RedisStreamScope release"
             echo
             echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Previous version | $CURRENT_VERSION |"
             echo "| Released version | $VERSION |"
             echo "| Container image | $IMAGE:$VERSION |"
+            echo "| Helm chart | oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts/redisstreamscope:$VERSION |"
             echo "| Platforms | linux/amd64, linux/arm64 |"
           } >> "$GITHUB_STEP_SUMMARY"
