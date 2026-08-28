@@ -1,0 +1,24 @@
+RedisStreamScope has been installed as {{ include "redisstreamscope.fullname" . }}.
+
+{{- if .Values.ingress.enabled }}
+Open one of the configured Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  - http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+To open RedisStreamScope locally:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "redisstreamscope.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then open http://localhost:8080.
+{{- end }}
+
+Initial sign-in:
+  Username: {{ .Values.initialAdmin.username }}
+  Password: kubectl --namespace {{ .Release.Namespace }} get secret {{ include "redisstreamscope.initialAdminSecretName" . }} -o jsonpath="{.data['{{ .Values.initialAdmin.passwordKey }}']}" | base64 --decode
+
+The initial administrator is required to choose a new password after signing in.
+
+Redis is not bundled with this chart. Configure it in Settings, or supply the
+redis.* values during installation. The /data volume contains the application
+database and managed settings{{ if .Values.persistence.retain }} and is retained after Helm uninstall{{ end }}.

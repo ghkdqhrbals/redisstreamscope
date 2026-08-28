@@ -416,6 +416,10 @@ func (s *store) hasUsers(ctx context.Context) (bool, error) {
 }
 
 func (s *store) createInitialAdmin(ctx context.Context, username, displayName, passwordHash string) (userRecord, error) {
+	return s.createInitialAdminWithPasswordChange(ctx, username, displayName, passwordHash, false)
+}
+
+func (s *store) createInitialAdminWithPasswordChange(ctx context.Context, username, displayName, passwordHash string, mustChangePassword bool) (userRecord, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return userRecord{}, err
@@ -438,14 +442,14 @@ func (s *store) createInitialAdmin(ctx context.Context, username, displayName, p
 		return userRecord{}, err
 	}
 	now := time.Now().UTC()
-	if _, err = transaction.ExecContext(ctx, `INSERT INTO users(id, username, display_name, password_hash, role, enabled, must_change_password, created_at, updated_at) VALUES(?,?,?,?, 'admin', 1, 0, ?, ?)`,
-		id, username, displayName, passwordHash, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err = transaction.ExecContext(ctx, `INSERT INTO users(id, username, display_name, password_hash, role, enabled, must_change_password, created_at, updated_at) VALUES(?,?,?,?, 'admin', 1, ?, ?, ?)`,
+		id, username, displayName, passwordHash, mustChangePassword, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return userRecord{}, err
 	}
 	if err := transaction.Commit(); err != nil {
 		return userRecord{}, err
 	}
-	return userRecord{ID: id, Username: username, DisplayName: displayName, Role: "admin", Enabled: true, CreatedAt: now}, nil
+	return userRecord{ID: id, Username: username, DisplayName: displayName, Role: "admin", Enabled: true, PasswordChangeRequired: mustChangePassword, CreatedAt: now}, nil
 }
 
 func (s *store) authenticate(ctx context.Context, username string) (userRecord, string, error) {

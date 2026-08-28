@@ -431,3 +431,38 @@ func TestEnsureDefaultAdminCreatesReusableCredentials(t *testing.T) {
 		t.Fatalf("default administrator must only be created once: users=%d err=%v", len(users), err)
 	}
 }
+
+func TestEnsureDefaultAdminUsesPasswordFileAndRequiresRotation(t *testing.T) {
+	directory := t.TempDir()
+	passwordPath := filepath.Join(directory, "initial-admin-password")
+	if err := os.WriteFile(passwordPath, []byte("generated-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INITIAL_ADMIN_USERNAME", "cluster-admin")
+	t.Setenv("INITIAL_ADMIN_DISPLAY_NAME", "Cluster Administrator")
+	t.Setenv("INITIAL_ADMIN_PASSWORD_FILE", passwordPath)
+
+	config := appConfig{DataPath: filepath.Join(directory, "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+
+	if err := ensureDefaultAdmin(store); err != nil {
+		t.Fatal(err)
+	}
+	admin, passwordHash, err := store.authenticate(context.Background(), "cluster-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !admin.PasswordChangeRequired {
+		t.Fatal("secret-backed initial administrator must change the password")
+	}
+	if admin.DisplayName != "Cluster Administrator" {
+		t.Fatalf("unexpected display name %q", admin.DisplayName)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte("generated-password")); err != nil {
+		t.Fatal("initial administrator password was not loaded from the secret file")
+	}
+}

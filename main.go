@@ -120,13 +120,27 @@ func ensureDefaultAdmin(store *store) error {
 	if configured {
 		return nil
 	}
-	passwordHash, err := hashPassword("password")
+	username := envOr("INITIAL_ADMIN_USERNAME", "admin")
+	displayName := envOr("INITIAL_ADMIN_DISPLAY_NAME", "System Administrator")
+	password := "password"
+	mustChangePassword := false
+	if passwordFile := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_PASSWORD_FILE")); passwordFile != "" {
+		password, err = readSecretFile(passwordFile)
+		if err != nil {
+			return fmt.Errorf("read initial administrator password: %w", err)
+		}
+		mustChangePassword = true
+	}
+	if len(strings.TrimSpace(username)) < 3 {
+		return errors.New("INITIAL_ADMIN_USERNAME must contain at least 3 characters")
+	}
+	passwordHash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	_, err = store.createInitialAdmin(context.Background(), "admin", "System Administrator", passwordHash)
+	_, err = store.createInitialAdminWithPasswordChange(context.Background(), username, displayName, passwordHash, mustChangePassword)
 	if err == nil {
-		log.Print(`{"level":"info","message":"Default administrator created","username":"admin"}`)
+		log.Printf(`{"level":"info","message":"Default administrator created","username":%q}`, username)
 	}
 	return err
 }

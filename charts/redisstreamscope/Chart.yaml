@@ -1,0 +1,20 @@
+apiVersion: v2
+name: redisstreamscope
+description: A focused, self-hosted operations console for Redis Streams
+type: application
+version: 2.4.1
+appVersion: "2.4.1"
+kubeVersion: ">=1.24.0-0"
+home: https://github.com/ghkdqhrbals/redisstreamscope
+sources:
+  - https://github.com/ghkdqhrbals/redisstreamscope
+maintainers:
+  - name: ghkdqhrbals
+    url: https://github.com/ghkdqhrbals
+keywords:
+  - redis
+  - redis-streams
+  - monitoring
+  - operations
+annotations:
+  org.opencontainers.image.source: https://github.com/ghkdqhrbals/redisstreamscope
