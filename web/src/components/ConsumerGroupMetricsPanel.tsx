@@ -5,6 +5,7 @@ import { useI18n } from "../i18n";
 import type { ConsumerGroup, ConsumerGroupMetricPoint, ConsumerGroupMetricSeries, ConsumerGroupMetricValue, OperationalSnapshot, StreamMetricSeries, StreamOperationalHealth } from "../types";
 import { MetricTimeSeriesChart, type MetricChartSeries } from "./MetricTimeSeriesChart";
 import { ResizableGrid, type ResizableGridColumn } from "./ResizableGrid";
+import { Select } from "./Select";
 
 type ConsumerGroupMetricsPanelProps = {
   connectionId: string;
@@ -37,7 +38,11 @@ const groupLineClasses = [
   "metric-line-group-3",
   "metric-line-group-4",
   "metric-line-group-5",
+  "metric-line-group-6",
+  "metric-line-group-7",
 ];
+const maximumVisibleGroups = 8;
+const initialVisibleGroups = 6;
 
 export function ConsumerGroupMetricsPanel({
   connectionId,
@@ -56,12 +61,22 @@ export function ConsumerGroupMetricsPanel({
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [visibleGroupNames, setVisibleGroupNames] = useState<string[]>([]);
   const requestSequence = useRef(0);
   const inFlightRequest = useRef<{ sequence: number; signature: string } | null>(null);
   const operationalSnapshotRef = useRef<OperationalSnapshot | null>(null);
   const operationalRequestedAt = useRef(0);
   const operationalRequest = useRef<{ connectionId: string; promise: Promise<OperationalSnapshot> } | null>(null);
   const operationalError = useRef("");
+  const rangeOptions = useMemo(() => [
+    { value: "1m", label: t("Last minute") },
+    { value: "5m", label: t("Last 5 minutes") },
+    { value: "15m", label: t("Last 15 minutes") },
+    { value: "1h", label: t("Last hour") },
+    { value: "6h", label: t("Last 6 hours") },
+    { value: "24h", label: t("Last 24 hours") },
+    { value: "7d", label: t("Last 7 days") },
+  ], [t]);
 
   const load = useCallback(async (forceOperational = false) => {
     if (!connectionId || !streamKey || !monitored) {
@@ -152,22 +167,30 @@ export function ConsumerGroupMetricsPanel({
   }, [connectionId, live, load, monitored, streamKey]);
 
   const formatLag = useCallback((value: number) => Math.round(value).toLocaleString(locale), [locale]);
-  const streamBacklogSeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
-    id: "stream-backlog",
-    label: t("Backlog"),
-    description: t("Backlog is undelivered lag plus delivered entries still awaiting ACK."),
-    className: "metric-line-primary",
-    value: aggregateBacklog,
-    format: formatLag,
-  }], [formatLag, t]);
-  const streamDeliverySeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
-    id: "stream-delivery-rate",
-    label: t("Consumer delivery rate"),
-    description: t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."),
-    className: "metric-line-primary",
-    value: aggregateDeliveryRate,
-    format: formatRate,
-  }], [t]);
+  const metricGroupIdentity = [...(metrics?.groups ?? [])].sort((left, right) => left.localeCompare(right)).join("\u0000");
+  const availableMetricGroups = useMemo(() => {
+    const currentByName = new Map((groups ?? []).map((group) => [group.name, group]));
+    return metricGroupIdentity ? metricGroupIdentity.split("\u0000").sort((left, right) => {
+      const leftGroup = currentByName.get(left);
+      const rightGroup = currentByName.get(right);
+      const leftBacklog = leftGroup ? Math.max(0, leftGroup.lag) + leftGroup.pending : -1;
+      const rightBacklog = rightGroup ? Math.max(0, rightGroup.lag) + rightGroup.pending : -1;
+      return rightBacklog - leftBacklog || left.localeCompare(right);
+    }) : [];
+  }, [groups, metricGroupIdentity]);
+  useEffect(() => {
+    setVisibleGroupNames((current) => {
+      const available = new Set(availableMetricGroups);
+      const retained = current.filter((name) => available.has(name)).slice(0, maximumVisibleGroups);
+      return retained.length ? retained : availableMetricGroups.slice(0, initialVisibleGroups);
+    });
+  }, [connectionId, metricGroupIdentity, streamKey]);
+  const stableMetricGroupOrder = useMemo(() => metricGroupIdentity ? metricGroupIdentity.split("\u0000") : [], [metricGroupIdentity]);
+  const streamLagSeries = useGroupSeries(visibleGroupNames, stableMetricGroupOrder, t("Entries that have not yet been delivered to this consumer group."), groupLag, formatLag);
+  const streamPendingSeries = useGroupSeries(visibleGroupNames, stableMetricGroupOrder, t("Delivered messages that remain unacknowledged in the PEL."), groupPending, formatLag);
+  const streamDeliverySeries = useGroupSeries(visibleGroupNames, stableMetricGroupOrder, t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."), groupConsumeRate, formatRate);
+  const streamLagChangeSeries = useGroupSeries(visibleGroupNames, stableMetricGroupOrder, t("Positive values mean backlog is growing; negative values mean it is draining."), groupLagDelta, formatSignedRate);
+  const streamDelaySeries = useGroupSeries(visibleGroupNames, stableMetricGroupOrder, t("Age of the group's most recently delivered Stream ID at collection time. This is not processing latency."), groupObservedDeliveryAge, formatMilliseconds);
   const groupBacklogSeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
     id: "group-undelivered",
     label: t("Undelivered lag"),
@@ -184,8 +207,22 @@ export function ConsumerGroupMetricsPanel({
     format: formatLag,
   }], [formatLag, selectedGroupName, t]);
   const selectedMetricGroups = useMemo(() => selectedGroupName ? [selectedGroupName] : [], [selectedGroupName]);
-  const groupDeliverySeries = useGroupSeries(selectedMetricGroups, t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."), groupConsumeRate, formatRate);
-  const groupDelaySeries = useGroupSeries(selectedMetricGroups, t("Age of the group's most recently delivered Stream ID at collection time. This is not processing latency."), groupObservedDeliveryAge, formatMilliseconds);
+  const groupDeliverySeries = useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => [{
+    id: `${selectedGroupName}:delivery`,
+    label: t("Consumer delivery rate"),
+    description: t("Consumer-group entries-read progress per second. This measures delivery progress, not ACK completion."),
+    className: "metric-line-group-0",
+    value: (point) => selectedGroupName ? groupConsumeRate(point, selectedGroupName) : null,
+    format: formatRate,
+  }, {
+    id: `${selectedGroupName}:lag-change`,
+    label: t("Lag change / s"),
+    description: t("Positive values mean backlog is growing; negative values mean it is draining."),
+    className: "metric-line-group-1",
+    value: (point) => selectedGroupName ? groupLagDelta(point, selectedGroupName) : null,
+    format: formatSignedRate,
+  }], [selectedGroupName, t]);
+  const groupDelaySeries = useGroupSeries(selectedMetricGroups, selectedMetricGroups, t("Age of the group's most recently delivered Stream ID at collection time. This is not processing latency."), groupObservedDeliveryAge, formatMilliseconds);
   const groupColumns = useMemo<ResizableGridColumn[]>(() => [
     { id: "name", label: t("Consumer groups"), defaultWidth: 240, minWidth: 170, grow: true },
     { id: "backlog", label: t("Backlog"), defaultWidth: 128, minWidth: 104 },
@@ -234,21 +271,45 @@ export function ConsumerGroupMetricsPanel({
       <div><h2>{t("Consumer group performance")}</h2><span>{metrics ? t("{seconds}s samples", { seconds: metrics.intervalSeconds }) : t("Time series")}</span></div>
       <div className="metric-history-controls">
         {leadingControls}
-        <select value={range} onChange={(event) => setRange(event.target.value as StreamMetricSeries["range"])} aria-label={t("Time range")}>
-          <option value="1m">{t("Last minute")}</option>
-          <option value="5m">{t("Last 5 minutes")}</option>
-          <option value="15m">{t("Last 15 minutes")}</option>
-          <option value="1h">{t("Last hour")}</option>
-          <option value="6h">{t("Last 6 hours")}</option>
-          <option value="24h">{t("Last 24 hours")}</option>
-          <option value="7d">{t("Last 7 days")}</option>
-        </select>
+        <Select value={range} options={rangeOptions} onChange={(next) => setRange(next as StreamMetricSeries["range"])} ariaLabel={t("Time range")} prefix={t("Range")} size="compact" />
         <button type="button" className={live ? "metric-live active" : "metric-live"} aria-pressed={live} onClick={() => setLive((current) => !current)}><Radio size={14} />{t("Live")}</button>
         <button type="button" aria-label={t("Refresh metrics")} title={t("Refresh metrics")} disabled={loading || !connectionId || !streamKey || !monitored} onClick={() => void load(true)}><RefreshCw className={loading ? "spin" : ""} size={14} /></button>
       </div>
     </header>
     {error ? <div className="metric-history-error">{error}</div> : null}
     {monitored && streamKey && (mode === "stream" || selectedGroupName) ? <OperationalKpis summary={operationalSummary} mode={mode} /> : null}
+    {mode === "stream" && availableMetricGroups.length ? <div className="metric-series-picker metric-group-series-picker" role="group" aria-label={t("Consumer groups shown on charts")}>
+      <span>{t("Compare")}</span>
+      <div>{availableMetricGroups.map((groupName) => {
+        const active = visibleGroupNames.includes(groupName);
+        const colorIndex = Math.max(0, stableMetricGroupOrder.indexOf(groupName)) % groupLineClasses.length;
+        return <button
+          type="button"
+          key={groupName}
+          className={active ? "active" : ""}
+          aria-pressed={active}
+          disabled={!active && visibleGroupNames.length >= maximumVisibleGroups}
+          onClick={() => setVisibleGroupNames((current) => current.includes(groupName)
+            ? current.filter((name) => name !== groupName)
+            : current.length < maximumVisibleGroups ? [...current, groupName] : current)}
+          title={groupName}
+        ><i className={groupLineClasses[colorIndex]} /><span className="mono">{groupName}</span></button>;
+      })}</div>
+      <em>{t("{count} of 8 consumer groups", { count: visibleGroupNames.length })}</em>
+    </div> : null}
+    {emptyMessage || (mode === "stream" && !visibleGroupNames.length) ? <div className="consumer-group-metrics-empty">{emptyMessage || t("Select consumer groups to compare.")}</div> : <div className={`metric-chart-grid consumer-group-chart-grid consumer-group-chart-grid--${mode}`}>
+      {mode === "stream" ? <>
+        <MetricTimeSeriesChart title={t("Lag by consumer group")} points={metrics?.items ?? []} series={streamLagSeries} valueKind="count" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={t("Pending by consumer group")} points={metrics?.items ?? []} series={streamPendingSeries} valueKind="count" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={t("Delivery rate by consumer group")} points={metrics?.items ?? []} series={streamDeliverySeries} valueKind="rate" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={t("Lag change by consumer group")} points={metrics?.items ?? []} series={streamLagChangeSeries} valueKind="rate" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={t("Observed delivery age by consumer group")} points={metrics?.items ?? []} series={streamDelaySeries} valueKind="duration" expectedIntervalSeconds={metrics?.intervalSeconds} />
+      </> : <>
+        <MetricTimeSeriesChart title={`${t("Backlog")} · ${t("Pending")}`} points={metrics?.items ?? []} series={groupBacklogSeries} valueKind="count" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={`${t("Consumer delivery rate")} · ${t("Lag change / s")}`} points={metrics?.items ?? []} series={groupDeliverySeries} valueKind="rate" expectedIntervalSeconds={metrics?.intervalSeconds} />
+        <MetricTimeSeriesChart title={t("Last-delivered entry age")} points={metrics?.items ?? []} series={groupDelaySeries} valueKind="duration" expectedIntervalSeconds={metrics?.intervalSeconds} />
+      </>}
+    </div>}
     {mode === "stream" && groups ? <ResizableGrid className="simple-table" storageKey="stream-consumer-group-performance" columns={groupColumns} headerClassName="simple-head">
       {sortedGroups.map((group) => {
         const performance = performanceByGroup.get(group.name);
@@ -276,16 +337,6 @@ export function ConsumerGroupMetricsPanel({
       })}
       {!groups.length ? <div className="panel-empty">{t("No consumer groups.")}</div> : null}
     </ResizableGrid> : null}
-    {emptyMessage ? <div className="consumer-group-metrics-empty">{emptyMessage}</div> : <div className={`metric-chart-grid consumer-group-chart-grid consumer-group-chart-grid--${mode}`}>
-      {mode === "stream" ? <>
-        <MetricTimeSeriesChart title={t("Backlog")} points={metrics?.items ?? []} series={streamBacklogSeries} valueKind="count" />
-        <MetricTimeSeriesChart title={t("Consumer delivery rate")} points={metrics?.items ?? []} series={streamDeliverySeries} valueKind="rate" />
-      </> : <>
-        <MetricTimeSeriesChart title={`${t("Backlog")} · ${t("Pending")}`} points={metrics?.items ?? []} series={groupBacklogSeries} valueKind="count" />
-        <MetricTimeSeriesChart title={t("Consumer delivery rate")} points={metrics?.items ?? []} series={groupDeliverySeries} valueKind="rate" />
-        <MetricTimeSeriesChart title={t("Last-delivered entry age")} points={metrics?.items ?? []} series={groupDelaySeries} valueKind="duration" />
-      </>}
-    </div>}
   </section>;
 }
 
@@ -372,18 +423,19 @@ function buildGroupPerformance(metrics: ConsumerGroupMetricSeries | null) {
 
 function useGroupSeries(
   groups: string[],
+  stableGroupOrder: string[],
   description: string,
   value: (point: ConsumerGroupMetricPoint, group: string) => number | null,
   format: (value: number) => string,
 ) {
-  return useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => groups.map((group, index) => ({
+  return useMemo<MetricChartSeries<ConsumerGroupMetricPoint>[]>(() => groups.map((group) => ({
     id: group,
     label: group,
     description,
-    className: groupLineClasses[index % groupLineClasses.length],
+    className: groupLineClasses[Math.max(0, stableGroupOrder.indexOf(group)) % groupLineClasses.length],
     value: (point) => value(point, group),
     format,
-  })), [description, format, groups, value]);
+  })), [description, format, groups, stableGroupOrder, value]);
 }
 
 function formatMilliseconds(value: number) {
@@ -395,6 +447,11 @@ function formatMilliseconds(value: number) {
 
 function formatRate(value: number) {
   return `${value.toFixed(value < 10 ? 2 : 1)} /s`;
+}
+
+function formatSignedRate(value: number) {
+  const formatted = value.toFixed(Math.abs(value) < 10 ? 2 : 1);
+  return `${value > 0 ? "+" : ""}${formatted}/s`;
 }
 
 function formatDuration(milliseconds: number | null | undefined) {
@@ -422,16 +479,8 @@ function groupPending(point: ConsumerGroupMetricPoint, group: string) {
   return point.values[group]?.pending ?? null;
 }
 
-function aggregateBacklog(point: ConsumerGroupMetricPoint) {
-  const values = Object.values(point.values);
-  if (!values.length || values.some((value) => value.lag === null)) return null;
-  return values.reduce((sum, value) => sum + (value.lag ?? 0) + value.pending, 0);
-}
-
-function aggregateDeliveryRate(point: ConsumerGroupMetricPoint) {
-  const values = Object.values(point.values).map((value) => value.consumeRate);
-  if (!values.length || values.some((value) => value === null || !Number.isFinite(value))) return null;
-  return (values as number[]).reduce((sum, value) => sum + value, 0);
+function groupLagDelta(point: ConsumerGroupMetricPoint, group: string) {
+  return point.values[group]?.lagDelta ?? null;
 }
 
 function groupObservedDeliveryAge(point: ConsumerGroupMetricPoint, group: string) {

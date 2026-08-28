@@ -94,6 +94,7 @@ func alertOperationSchemaStatements() []string {
 			route_id TEXT NOT NULL REFERENCES alert_webhook_routes(id) ON DELETE CASCADE,
 			name TEXT NOT NULL,
 			webhook_url TEXT NOT NULL,
+			format TEXT NOT NULL DEFAULT 'webhook',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -184,6 +185,8 @@ func alertOperationSchemaStatements() []string {
 
 func migrateAlertOperationSchema(ctx context.Context, s *store) error {
 	columns := []string{
+		`ALTER TABLE alert_rules ADD COLUMN webhook_format TEXT NOT NULL DEFAULT 'webhook'`,
+		`ALTER TABLE alert_webhook_route_destinations ADD COLUMN format TEXT NOT NULL DEFAULT 'webhook'`,
 		`ALTER TABLE alert_webhook_deliveries ADD COLUMN delivery_group_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_webhook_deliveries ADD COLUMN dedup_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE alert_webhook_deliveries ADD COLUMN route_id TEXT NOT NULL DEFAULT ''`,
@@ -248,6 +251,7 @@ type alertRouteDestination struct {
 	Name              string    `json:"name"`
 	WebhookURL        string    `json:"-"`
 	WebhookConfigured bool      `json:"webhookConfigured"`
+	Format            string    `json:"format"`
 	Enabled           bool      `json:"enabled"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -257,6 +261,7 @@ type alertRouteDestinationInput struct {
 	ID         string `json:"id,omitempty"`
 	Name       string `json:"name"`
 	WebhookURL string `json:"webhookUrl,omitempty"`
+	Format     string `json:"format,omitempty"`
 	Enabled    *bool  `json:"enabled,omitempty"`
 }
 
@@ -323,6 +328,7 @@ type alertDeliveryTarget struct {
 	RouteID       string
 	DestinationID string
 	URL           string
+	Format        string
 }
 
 type alertNotificationJob struct {
@@ -740,9 +746,15 @@ func normalizeAlertWebhookRouteInput(ctx context.Context, input alertWebhookRout
 		if raw.Enabled != nil {
 			enabledDestination = *raw.Enabled
 		}
+		format := raw.Format
+		if strings.TrimSpace(format) == "" && strings.TrimSpace(raw.ID) != "" {
+			if current, exists := existing[strings.TrimSpace(raw.ID)]; exists {
+				format = current.Format
+			}
+		}
 		item := alertRouteDestination{
 			ID: strings.TrimSpace(raw.ID), Name: strings.TrimSpace(raw.Name),
-			WebhookURL: strings.TrimSpace(raw.WebhookURL), Enabled: enabledDestination,
+			WebhookURL: strings.TrimSpace(raw.WebhookURL), Format: normalizeAlertWebhookFormat(format), Enabled: enabledDestination,
 		}
 		if item.Name == "" || len(item.Name) > 120 {
 			return route, errors.New("destination name must contain 1 to 120 characters")
@@ -767,6 +779,9 @@ func normalizeAlertWebhookRouteInput(ctx context.Context, input alertWebhookRout
 		}
 		if len(item.WebhookURL) > 2048 {
 			return route, errors.New("webhookUrl is too long")
+		}
+		if err := validateAlertWebhookFormat(item.Format); err != nil {
+			return route, fmt.Errorf("invalid webhook format for %s: %w", item.Name, err)
 		}
 		if err := validateAlertWebhookURL(ctx, item.WebhookURL); err != nil {
 			return route, fmt.Errorf("invalid webhook URL for %s: %w", item.Name, err)
@@ -880,8 +895,8 @@ func (s *store) persistAlertWebhookRoute(ctx context.Context, route alertWebhook
 	}
 	for _, destination := range route.Destinations {
 		_, err := transaction.ExecContext(ctx, `INSERT INTO alert_webhook_route_destinations(
-			id,route_id,name,webhook_url,enabled,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?)`, destination.ID, route.ID, destination.Name, destination.WebhookURL,
+			id,route_id,name,webhook_url,format,enabled,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?)`, destination.ID, route.ID, destination.Name, destination.WebhookURL, destination.Format,
 			boolInt(destination.Enabled), formatAlertTime(destination.CreatedAt), formatAlertTime(destination.UpdatedAt))
 		if err != nil {
 			return err
@@ -917,7 +932,7 @@ func (s *store) getAlertWebhookRoute(ctx context.Context, id string, includeSecr
 	if err := unmarshalAlertJSON(labels, &route.Selector.Labels); err != nil {
 		return route, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,webhook_url,enabled,created_at,updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,webhook_url,format,enabled,created_at,updated_at
 		FROM alert_webhook_route_destinations WHERE route_id=? ORDER BY name COLLATE NOCASE,id`, id)
 	if err != nil {
 		return route, err
@@ -926,12 +941,13 @@ func (s *store) getAlertWebhookRoute(ctx context.Context, id string, includeSecr
 		var destination alertRouteDestination
 		var destinationEnabled int
 		var destinationCreatedAt, destinationUpdatedAt string
-		if err := rows.Scan(&destination.ID, &destination.Name, &destination.WebhookURL, &destinationEnabled,
+		if err := rows.Scan(&destination.ID, &destination.Name, &destination.WebhookURL, &destination.Format, &destinationEnabled,
 			&destinationCreatedAt, &destinationUpdatedAt); err != nil {
 			return route, err
 		}
 		destination.Enabled = destinationEnabled == 1
 		destination.WebhookConfigured = destination.WebhookURL != ""
+		destination.Format = normalizeAlertWebhookFormat(destination.Format)
 		destination.CreatedAt, destination.UpdatedAt = parseAlertTime(destinationCreatedAt), parseAlertTime(destinationUpdatedAt)
 		if !includeSecrets {
 			destination.WebhookURL = ""
@@ -1039,7 +1055,7 @@ func (s *store) matchingAlertDeliveryTargets(ctx context.Context, notification a
 		}
 		for _, destination := range route.Destinations {
 			if destination.Enabled && destination.WebhookURL != "" {
-				targets = append(targets, alertDeliveryTarget{RouteID: route.ID, DestinationID: destination.ID, URL: destination.WebhookURL})
+				targets = append(targets, alertDeliveryTarget{RouteID: route.ID, DestinationID: destination.ID, URL: destination.WebhookURL, Format: destination.Format})
 			}
 		}
 	}
@@ -1057,7 +1073,7 @@ func (s *store) alertRouteTargetsByID(ctx context.Context, routeID string) ([]al
 	targets := make([]alertDeliveryTarget, 0, len(route.Destinations))
 	for _, destination := range route.Destinations {
 		if destination.Enabled && destination.WebhookURL != "" {
-			targets = append(targets, alertDeliveryTarget{RouteID: route.ID, DestinationID: destination.ID, URL: destination.WebhookURL})
+			targets = append(targets, alertDeliveryTarget{RouteID: route.ID, DestinationID: destination.ID, URL: destination.WebhookURL, Format: destination.Format})
 		}
 	}
 	return targets, nil
@@ -1368,7 +1384,7 @@ func (s *alertService) dispatchAlertNotification(ctx context.Context, notificati
 		return err
 	}
 	if notification.Rule.WebhookURL != "" {
-		targets = append([]alertDeliveryTarget{{URL: notification.Rule.WebhookURL}}, targets...)
+		targets = append([]alertDeliveryTarget{{URL: notification.Rule.WebhookURL, Format: notification.Rule.WebhookFormat}}, targets...)
 	}
 	if len(targets) == 0 {
 		if notification.Event == "firing" || notification.Event == "repeat" {
@@ -1385,6 +1401,7 @@ func (s *alertService) dispatchAlertNotification(ctx context.Context, notificati
 		item := notification
 		item.EffectiveSeverity = severity
 		item.RouteID, item.DestinationID, item.DestinationURL = target.RouteID, target.DestinationID, target.URL
+		item.DestinationFormat = normalizeAlertWebhookFormat(target.Format)
 		item.DedupKey = alertDeterministicID("notification", item.Incident.ID, item.Event, groupSeed, target.RouteID, target.DestinationID, target.URL)
 		// Enqueue is non-blocking. When the production dispatcher is used the
 		// job is persisted before the bounded queue is attempted, so queue
@@ -1438,6 +1455,13 @@ func (s *store) reserveAlertNotificationJob(ctx context.Context, notification al
 	}
 	if notification.DestinationURL == "" {
 		return notification, false, errors.New("notification destination is required")
+	}
+	if notification.DestinationFormat == "" {
+		notification.DestinationFormat = notification.Rule.WebhookFormat
+	}
+	notification.DestinationFormat = normalizeAlertWebhookFormat(notification.DestinationFormat)
+	if err := validateAlertWebhookFormat(notification.DestinationFormat); err != nil {
+		return notification, false, err
 	}
 	if notification.DeliveryGroupID == "" {
 		notification.DeliveryGroupID = alertDeterministicID("delivery-group", notification.Incident.ID, notification.Event, formatAlertTime(notification.SentAt))
@@ -1605,8 +1629,8 @@ func (s *store) completeAlertNotificationJob(ctx context.Context, job alertNotif
 
 func (s *store) activeAlertIncidentsForEscalation(ctx context.Context) ([]alertNotification, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.rule_id,i.status,i.started_at,i.updated_at,
-		i.trigger_value,i.last_value,i.summary,r.name,r.metric,r.severity,r.connection_id,r.stream_key,r.group_name,
-		r.for_seconds,r.cooldown_seconds,r.enabled,r.webhook_url,r.created_by,r.created_at,r.updated_at,
+		i.trigger_value,i.last_value,i.summary,r.name,r.metric,r.operator,r.threshold,r.severity,r.connection_id,r.stream_key,r.group_name,
+		r.for_seconds,r.cooldown_seconds,r.enabled,r.webhook_url,r.webhook_format,r.created_by,r.created_at,r.updated_at,
 		COALESCE(l.labels_json,'{}'),COALESCE(l.connection_id,''),COALESCE(l.stream_key,''),
 		COALESCE(l.group_name,''),l.observed_at
 		FROM alert_incidents i JOIN alert_rules r ON r.id=i.rule_id
@@ -1624,14 +1648,15 @@ func (s *store) activeAlertIncidentsForEscalation(ctx context.Context) ([]alertN
 		var enabled int
 		if err := rows.Scan(&item.Incident.ID, &item.Incident.RuleID, &item.Incident.Status,
 			&startedAt, &updatedAt, &item.Incident.TriggerValue, &item.Incident.LastValue, &item.Incident.Summary,
-			&item.Rule.Name, &item.Rule.Metric, &item.Rule.Severity, &item.Rule.ConnectionID,
+			&item.Rule.Name, &item.Rule.Metric, &item.Rule.Operator, &item.Rule.Threshold, &item.Rule.Severity, &item.Rule.ConnectionID,
 			&item.Rule.StreamKey, &item.Rule.GroupName, &item.Rule.ForSeconds, &item.Rule.CooldownSeconds,
-			&enabled, &item.Rule.WebhookURL, &item.Rule.CreatedBy, &ruleCreatedAt, &ruleUpdatedAt, &labels,
+			&enabled, &item.Rule.WebhookURL, &item.Rule.WebhookFormat, &item.Rule.CreatedBy, &ruleCreatedAt, &ruleUpdatedAt, &labels,
 			&item.Observation.ConnectionID, &item.Observation.StreamKey, &item.Observation.GroupName, &observedAt); err != nil {
 			return nil, err
 		}
 		item.Rule.ID = item.Incident.RuleID
 		item.Rule.Enabled, item.Rule.WebhookConfigured = enabled == 1, item.Rule.WebhookURL != ""
+		item.Rule.WebhookFormat = normalizeAlertWebhookFormat(item.Rule.WebhookFormat)
 		item.Rule.CreatedAt, item.Rule.UpdatedAt = parseAlertTime(ruleCreatedAt), parseAlertTime(ruleUpdatedAt)
 		item.Incident.RuleName, item.Incident.Metric, item.Incident.Severity = item.Rule.Name, item.Rule.Metric, item.Rule.Severity
 		item.Incident.ConnectionID, item.Incident.StreamKey, item.Incident.GroupName = item.Rule.ConnectionID, item.Rule.StreamKey, item.Rule.GroupName
@@ -1707,6 +1732,7 @@ func (s *alertService) ScheduleEscalationsAt(ctx context.Context, now time.Time)
 				for _, target := range targets {
 					item := notification
 					item.RouteID, item.DestinationID, item.DestinationURL = target.RouteID, target.DestinationID, target.URL
+					item.DestinationFormat = normalizeAlertWebhookFormat(target.Format)
 					item.DeliveryGroupID = groupID
 					item.DedupKey = alertDeterministicID("escalation", item.Incident.ID, policy.ID, step.ID, target.DestinationID)
 					if err := enqueueAlertNotification(ctx, s.notifier, item); err != nil {

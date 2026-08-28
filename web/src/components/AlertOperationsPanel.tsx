@@ -1,8 +1,10 @@
-import { FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
-import { CalendarClock, Pencil, Plus, Route, Siren, Trash2, VolumeX, X } from "lucide-react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarClock, Pencil, Plus, Route, Send, Siren, Trash2, VolumeX, X } from "lucide-react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import type { AlertEscalationPolicy, AlertEscalationPolicyInput, AlertMetricDefinition, AlertSelector, AlertSuppression, AlertSuppressionInput, AlertWebhookRoute, AlertWebhookRouteInput, ToastState } from "../types";
+import { Select, type SelectOption } from "./Select";
+import { SlackAlertPreview } from "./SlackAlertPreview";
 
 type OperationTab = "silences" | "maintenance" | "routes" | "escalations";
 type Editing = { kind: OperationTab; item?: AlertSuppression | AlertWebhookRoute | AlertEscalationPolicy } | null;
@@ -53,8 +55,8 @@ export function AlertOperationsPanel({ canWrite, metrics, onToast }: { canWrite:
     {tab === "routes" ? <div className="alert-operation-list">{routes.map((item) => {
       const references = item.referencedByPolicies ?? [];
       const deleteReason = references.length ? t("Used by enabled escalation policies: {names}", { names: references.map((reference) => reference.name).join(", ") }) : "";
-      return <div key={item.id}><OperationState enabled={item.enabled} /><span data-label={t("Name")}><strong>{item.name}</strong><em>{item.destinations.length} {t("destinations")}{deleteReason ? ` · ${deleteReason}` : ""}</em></span><code data-label={t("Scope")}>{formatOperationScope(item.selector)}</code><span data-label={t("Destinations")}>{item.destinations.map((destination) => destination.name).join(" · ") || "—"}</span><OperationActions canWrite={canWrite} deleteDisabled={item.deleteBlocked || references.length > 0} deleteReason={deleteReason} onEdit={() => setEditing({ kind: tab, item })} onDelete={() => void remove(tab, item.id, item.name)} /></div>;
-    })}{!routes.length && !loading ? <div className="panel-empty">{t("No webhook routes.")}</div> : null}</div> : null}
+      return <div key={item.id}><OperationState enabled={item.enabled} /><span data-label={t("Name")}><strong>{item.name}</strong><em>{item.destinations.length} {t("destinations")}{deleteReason ? ` · ${deleteReason}` : ""}</em></span><code data-label={t("Scope")}>{formatOperationScope(item.selector)}</code><span data-label={t("Destinations")}>{item.destinations.map((destination) => `${destination.name} (${destination.format === "slack" ? t("Slack") : t("JSON webhook")})`).join(" · ") || "—"}</span><OperationActions canWrite={canWrite} deleteDisabled={item.deleteBlocked || references.length > 0} deleteReason={deleteReason} onEdit={() => setEditing({ kind: tab, item })} onDelete={() => void remove(tab, item.id, item.name)} /></div>;
+    })}{!routes.length && !loading ? <div className="panel-empty">{t("No notification routes.")}</div> : null}</div> : null}
     {tab === "escalations" ? <div className="alert-operation-list">{policies.map((item) => <div key={item.id}><OperationState enabled={item.enabled} /><span data-label={t("Name")}><strong>{item.name}</strong><em>{item.steps.length} {t("steps")}</em></span><code data-label={t("Scope")}>{formatOperationScope(item.selector)}</code><span data-label={t("Escalation steps")}>{item.steps.map((step) => `${formatDelay(step.afterSeconds)} → ${step.targetSeverity}`).join(" · ")}</span><OperationActions canWrite={canWrite} onEdit={() => setEditing({ kind: tab, item })} onDelete={() => void remove(tab, item.id, item.name)} /></div>)}{!policies.length && !loading ? <div className="panel-empty">{t("No escalation policies.")}</div> : null}</div> : null}
     {editing && (editing.kind === "silences" || editing.kind === "maintenance") ? <SuppressionEditor kind={editing.kind} item={editing.item as AlertSuppression | undefined} metrics={metrics} onClose={() => setEditing(null)} onSaved={load} onToast={onToast} /> : null}
     {editing?.kind === "routes" ? <RouteEditor item={editing.item as AlertWebhookRoute | undefined} metrics={metrics} onClose={() => setEditing(null)} onSaved={load} onToast={onToast} /> : null}
@@ -91,12 +93,34 @@ function SuppressionEditor({ kind, item, metrics, onClose, onSaved, onToast }: {
 
 function RouteEditor({ item, metrics, onClose, onSaved, onToast }: { item?: AlertWebhookRoute; metrics: AlertMetricDefinition[]; onClose: () => void; onSaved: () => Promise<void>; onToast: (toast: ToastState) => void }) {
   const { t } = useI18n();
-  const [draft, setDraft] = useState<AlertWebhookRouteInput>(() => item ? { name: item.name, selector: item.selector, destinations: item.destinations.map((destination) => ({ id: destination.id, name: destination.name, webhookUrl: "", enabled: destination.enabled })), enabled: item.enabled } : { name: "", selector: {}, destinations: [{ name: "Primary", webhookUrl: "", enabled: true }], enabled: true });
+  const [draft, setDraft] = useState<AlertWebhookRouteInput>(() => item ? { name: item.name, selector: item.selector, destinations: item.destinations.map((destination) => ({ id: destination.id, name: destination.name, format: destination.format || "webhook", webhookUrl: "", enabled: destination.enabled })), enabled: item.enabled } : { name: "", selector: {}, destinations: [{ name: "Primary", format: "webhook", webhookUrl: "", enabled: true }], enabled: true });
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); try { item ? await api.updateAlertWebhookRoute(item.id, draft) : await api.createAlertWebhookRoute(draft); await onSaved(); onClose(); onToast({ kind: "success", title: t("Webhook route saved"), message: draft.name }); } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to save webhook route.")); } finally { setBusy(false); } };
-  return <OperationModal title={t("Webhook route")} onClose={onClose}><form onSubmit={submit} className="alert-operation-form"><label>{t("Name")}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label><span />
+  const [testingDestination, setTestingDestination] = useState<number | null>(null);
+  const formatOptions = useMemo<SelectOption[]>(() => [
+    { value: "webhook", label: t("JSON webhook"), description: t("HTTP POST with the complete alert event.") },
+    { value: "slack", label: t("Slack"), description: t("A channel-ready Incoming Webhook message.") },
+  ], [t]);
+  const destinationFormatChanged = (destination: AlertWebhookRouteInput["destinations"][number]) => Boolean(destination.id && destination.format !== (item?.destinations.find((current) => current.id === destination.id)?.format || "webhook"));
+  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); try { item ? await api.updateAlertWebhookRoute(item.id, draft) : await api.createAlertWebhookRoute(draft); await onSaved(); onClose(); onToast({ kind: "success", title: t("Notification route saved"), message: draft.name }); } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to save notification route.")); } finally { setBusy(false); } };
+  const testDestination = async (index: number) => {
+    const destination = draft.destinations[index];
+    if (!destination?.webhookUrl?.trim()) return;
+    setTestingDestination(index); setError("");
+    try {
+      const result = await api.testAlertWebhook(destination.webhookUrl.trim(), destination.format);
+      onToast({ kind: "success", title: t(destination.format === "slack" ? "Slack test delivered" : "Webhook delivered"), message: `HTTP ${result.statusCode}` });
+    } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Delivery test failed.")); }
+    finally { setTestingDestination(null); }
+  };
+  return <OperationModal title={t("Notification route")} onClose={onClose}><form onSubmit={submit} className="alert-operation-form"><label>{t("Name")}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label><span />
     <SelectorFields multiple selector={draft.selector} metrics={metrics} onChange={(selector) => setDraft({ ...draft, selector })} />
-    <div className="operation-wide destination-editor"><header><strong>{t("Destinations")}</strong><button type="button" onClick={() => setDraft({ ...draft, destinations: [...draft.destinations, { name: "", webhookUrl: "", enabled: true }] })}><Plus size={13} />{t("Add destination")}</button></header>{draft.destinations.map((destination, index) => <div key={destination.id ?? index}><input value={destination.name} onChange={(event) => setDraft({ ...draft, destinations: draft.destinations.map((current, currentIndex) => currentIndex === index ? { ...current, name: event.target.value } : current) })} placeholder={t("Destination name")} required /><input type="url" value={destination.webhookUrl} onChange={(event) => setDraft({ ...draft, destinations: draft.destinations.map((current, currentIndex) => currentIndex === index ? { ...current, webhookUrl: event.target.value } : current) })} placeholder={destination.id ? t("Leave blank to keep current URL") : "https://…"} required={!destination.id} /><button type="button" onClick={() => setDraft({ ...draft, destinations: draft.destinations.filter((_, currentIndex) => currentIndex !== index) })}><Trash2 size={14} /></button></div>)}</div>
+    <div className="operation-wide destination-editor"><header><div><strong>{t("Notification destinations")}</strong><small>{t("Choose JSON for an HTTP POST or Slack for a formatted channel message.")}</small></div><button type="button" onClick={() => setDraft({ ...draft, destinations: [...draft.destinations, { name: "", format: "webhook", webhookUrl: "", enabled: true }] })}><Plus size={13} />{t("Add destination")}</button></header>{draft.destinations.map((destination, index) => <div className="destination-row" key={destination.id ?? index}>
+      <label><span>{t("Destination name")}</span><input value={destination.name} onChange={(event) => setDraft({ ...draft, destinations: draft.destinations.map((current, currentIndex) => currentIndex === index ? { ...current, name: event.target.value } : current) })} required /></label>
+      <label><span>{t("Delivery format")}</span><Select className="select-control--block" value={destination.format} options={formatOptions} onChange={(format) => setDraft({ ...draft, destinations: draft.destinations.map((current, currentIndex) => currentIndex === index ? { ...current, format: format as "webhook" | "slack" } : current) })} ariaLabel={`${t("Delivery format")} · ${destination.name || index + 1}`} /></label>
+      <label><span>{destination.id && !destinationFormatChanged(destination) ? t("New destination URL (leave blank to keep current)") : t(destination.format === "slack" ? "Slack incoming webhook URL" : "Webhook URL")}</span><input type="url" value={destination.webhookUrl} onChange={(event) => setDraft({ ...draft, destinations: draft.destinations.map((current, currentIndex) => currentIndex === index ? { ...current, webhookUrl: event.target.value } : current) })} placeholder={destination.id && !destinationFormatChanged(destination) ? t("Leave blank to keep current URL") : destination.format === "slack" ? "https://hooks.slack.com/services/…" : "https://alerts.example.com/hooks/redis"} required={!destination.id || destinationFormatChanged(destination)} />{destinationFormatChanged(destination) ? <small>{t("Enter a new destination URL when changing the delivery format.")}</small> : null}</label>
+      <div className="destination-actions"><button type="button" disabled={!destination.webhookUrl?.trim() || testingDestination !== null} onClick={() => void testDestination(index)}><Send size={14} /><span>{testingDestination === index ? t("Testing…") : t("Send test")}</span></button><button type="button" aria-label={t("Delete")} onClick={() => setDraft({ ...draft, destinations: draft.destinations.filter((_, currentIndex) => currentIndex !== index) })}><Trash2 size={14} /></button></div>
+    </div>)}</div>
+    {draft.destinations.some((destination) => destination.format === "slack") ? <SlackAlertPreview /> : null}
     <label className="checkbox-field"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /><span>{t("Enabled")}</span></label>{error ? <div className="login-error operation-wide">{error}</div> : null}<footer className="operation-wide"><button type="button" onClick={onClose}>{t("Cancel")}</button><button className="primary-button" disabled={busy}>{busy ? t("Saving…") : t("Save")}</button></footer></form></OperationModal>;
 }
 
@@ -104,10 +128,21 @@ function EscalationEditor({ item, metrics, routes, onClose, onSaved, onToast }: 
   const { t } = useI18n();
   const [draft, setDraft] = useState<AlertEscalationPolicyInput>(() => item ? { name: item.name, selector: item.selector, steps: item.steps.map((step) => ({ id: step.id, afterSeconds: step.afterSeconds, routeId: step.routeId, targetSeverity: step.targetSeverity })), enabled: item.enabled } : { name: "", selector: {}, steps: [{ afterSeconds: 300, routeId: routes[0]?.id ?? "", targetSeverity: "critical" }], enabled: true });
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const routeOptions = useMemo<SelectOption[]>(() => routes.map((route) => ({
+    value: route.id,
+    label: route.name,
+    description: route.destinations.length
+      ? route.destinations.map((destination) => destination.name).join(" · ")
+      : t("No destinations configured."),
+    meta: route.enabled ? t("Enabled") : t("Disabled"),
+    keywords: `${route.id} ${route.destinations.map((destination) => destination.name).join(" ")}`,
+    tone: route.enabled ? "success" : "neutral",
+  })), [routes, t]);
+  const severityOptions = useMemo<SelectOption[]>(() => makeSeverityOptions(t), [t]);
   const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); try { item ? await api.updateAlertEscalationPolicy(item.id, draft) : await api.createAlertEscalationPolicy(draft); await onSaved(); onClose(); onToast({ kind: "success", title: t("Escalation policy saved"), message: draft.name }); } catch (cause) { setError(cause instanceof Error ? t(cause.message) : t("Unable to save escalation policy.")); } finally { setBusy(false); } };
   return <OperationModal title={t("Escalation policy")} onClose={onClose}><form onSubmit={submit} className="alert-operation-form"><label>{t("Name")}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label><span />
     <SelectorFields multiple selector={draft.selector} metrics={metrics} onChange={(selector) => setDraft({ ...draft, selector })} />
-    <div className="operation-wide escalation-editor"><header><strong>{t("Escalation steps")}</strong><button type="button" onClick={() => setDraft({ ...draft, steps: [...draft.steps, { afterSeconds: (draft.steps.at(-1)?.afterSeconds ?? 0) + 300, routeId: routes[0]?.id ?? "", targetSeverity: "critical" }] })}><Plus size={13} />{t("Add step")}</button></header>{draft.steps.map((step, index) => <div key={step.id ?? index}><label>{t("After seconds")}<input type="number" min={0} value={step.afterSeconds} onChange={(event) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, afterSeconds: Number(event.target.value) } : current) })} /></label><label>{t("Route")}<select value={step.routeId} onChange={(event) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, routeId: event.target.value } : current) })}>{routes.map((route) => <option value={route.id} key={route.id}>{route.name}</option>)}</select></label><label>{t("Severity")}<select value={step.targetSeverity} onChange={(event) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, targetSeverity: event.target.value } : current) })}><option value="info">{t("Info")}</option><option value="warning">{t("Warning")}</option><option value="critical">{t("Critical")}</option></select></label><button type="button" onClick={() => setDraft({ ...draft, steps: draft.steps.filter((_, currentIndex) => currentIndex !== index) })}><Trash2 size={14} /></button></div>)}</div>
+    <div className="operation-wide escalation-editor"><header><strong>{t("Escalation steps")}</strong><button type="button" onClick={() => setDraft({ ...draft, steps: [...draft.steps, { afterSeconds: (draft.steps.at(-1)?.afterSeconds ?? 0) + 300, routeId: routes[0]?.id ?? "", targetSeverity: "critical" }] })}><Plus size={13} />{t("Add step")}</button></header>{draft.steps.map((step, index) => <div key={step.id ?? index}><label>{t("After seconds")}<input type="number" min={0} value={step.afterSeconds} onChange={(event) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, afterSeconds: Number(event.target.value) } : current) })} /></label><label>{t("Route")}<Select className="select-control--block" value={step.routeId} options={routeOptions} onChange={(routeId) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, routeId } : current) })} ariaLabel={t("Route")} placeholder={t("Select a route")} searchable searchPlaceholder={t("Search routes…")} /></label><label>{t("Severity")}<Select className="select-control--block" value={step.targetSeverity} options={severityOptions} onChange={(targetSeverity) => setDraft({ ...draft, steps: draft.steps.map((current, currentIndex) => currentIndex === index ? { ...current, targetSeverity } : current) })} ariaLabel={t("Severity")} /></label><button type="button" onClick={() => setDraft({ ...draft, steps: draft.steps.filter((_, currentIndex) => currentIndex !== index) })}><Trash2 size={14} /></button></div>)}</div>
     <label className="checkbox-field"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /><span>{t("Enabled")}</span></label>{error ? <div className="login-error operation-wide">{error}</div> : null}<footer className="operation-wide"><button type="button" onClick={onClose}>{t("Cancel")}</button><button className="primary-button" disabled={busy || !routes.length}>{busy ? t("Saving…") : t("Save")}</button></footer></form></OperationModal>;
 }
 
@@ -116,7 +151,20 @@ type SelectorFieldsValue = AlertSelector & { severity?: string; metric?: string 
 function SelectorFields({ selector, metrics, onChange, multiple = false }: { selector: SelectorFieldsValue; metrics: AlertMetricDefinition[]; onChange: (next: SelectorFieldsValue) => void; multiple?: boolean }) {
   const { t } = useI18n();
   const patch = (values: Partial<SelectorFieldsValue>) => onChange({ ...selector, ...values });
-  const metricOptions = Array.from(new Set(metrics.map((item) => item.name))).map((value) => ({ value, label: value }));
+  const severityOptions = useMemo<SelectOption[]>(() => [
+    { value: "", label: t("All severities"), description: t("Match alerts at every severity."), tone: "neutral" },
+    ...makeSeverityOptions(t),
+  ], [t]);
+  const metricOptions = useMemo<SelectOption[]>(() => [
+    { value: "", label: t("All metrics"), description: t("Match every supported alert metric."), tone: "neutral" },
+    ...metrics.map((metric) => ({
+      value: metric.name,
+      label: metricName(metric.name),
+      description: metric.description,
+      meta: metric.unit,
+      keywords: `${metric.name} ${metric.scope.join(" ")}`,
+    })),
+  ], [metrics, t]);
   return <>
     {multiple ? <MultiValueSelector
       label={t("Severity")}
@@ -124,8 +172,8 @@ function SelectorFields({ selector, metrics, onChange, multiple = false }: { sel
       values={selector.severities ?? []}
       options={[{ value: "info", label: t("Info") }, { value: "warning", label: t("Warning") }, { value: "critical", label: t("Critical") }]}
       onChange={(severities) => patch({ severities })}
-    /> : <label>{t("Severity")}<select value={selector.severity ?? ""} onChange={(event) => patch({ severity: event.target.value })}><option value="">{t("All severities")}</option><option value="info">{t("Info")}</option><option value="warning">{t("Warning")}</option><option value="critical">{t("Critical")}</option></select></label>}
-    {multiple ? <MultiValueSelector label={t("Metric")} emptyLabel={t("All metrics")} values={selector.metrics ?? []} options={metricOptions} onChange={(nextMetrics) => patch({ metrics: nextMetrics })} /> : <label>{t("Metric")}<select value={selector.metric ?? ""} onChange={(event) => patch({ metric: event.target.value })}><option value="">{t("All metrics")}</option>{metricOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>}
+    /> : <label>{t("Severity")}<Select className="select-control--block" value={selector.severity ?? ""} options={severityOptions} onChange={(severity) => patch({ severity })} ariaLabel={t("Severity")} /></label>}
+    {multiple ? <MultiValueSelector label={t("Metric")} emptyLabel={t("All metrics")} values={selector.metrics ?? []} options={metricOptions.filter((option) => option.value).map((option) => ({ value: option.value, label: option.label }))} onChange={(nextMetrics) => patch({ metrics: nextMetrics })} /> : <label>{t("Metric")}<Select className="select-control--block" value={selector.metric ?? ""} options={metricOptions} onChange={(metric) => patch({ metric })} ariaLabel={t("Metric")} searchable searchPlaceholder={t("Search metrics…")} /></label>}
     <label>{t("Connection ID")}<input value={selector.connectionId ?? ""} onChange={(event) => patch({ connectionId: event.target.value })} placeholder="*" /></label><label>{t("Stream key")}<input value={selector.streamKey ?? ""} onChange={(event) => patch({ streamKey: event.target.value })} placeholder="*" /></label><label>{t("Consumer group")}<input value={selector.groupName ?? ""} onChange={(event) => patch({ groupName: event.target.value })} placeholder="*" /></label>
   </>;
 }
@@ -143,6 +191,18 @@ function MultiValueSelector({ label, emptyLabel, values, options, onChange }: { 
     </div>
     {!values.length ? <small>{emptyLabel}</small> : null}
   </fieldset>;
+}
+
+function makeSeverityOptions(t: (key: string) => string): SelectOption[] {
+  return [
+    { value: "info", label: t("Info"), tone: "info" },
+    { value: "warning", label: t("Warning"), tone: "warning" },
+    { value: "critical", label: t("Critical"), tone: "danger" },
+  ];
+}
+
+function metricName(metric: string) {
+  return metric.split("_").map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1) : part).join(" ");
 }
 
 function OperationModal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) { const { t } = useI18n(); return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal alert-operation-modal" onMouseDown={(event) => event.stopPropagation()}><header><h2>{title}</h2><button onClick={onClose} aria-label={t("Close")}><X size={18} /></button></header>{children}</div></div>; }

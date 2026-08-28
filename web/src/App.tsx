@@ -30,7 +30,8 @@ export function App() {
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState("");
-  const [page, setPage] = useState<Page>("streams");
+  const [page, setPage] = useState<Page>(() => readAlertDeepLink().page);
+  const [focusedAlertIncidentId, setFocusedAlertIncidentId] = useState(() => readAlertDeepLink().incidentId);
   const [selectedStreamKey, setSelectedStreamKey] = useState("");
   const [selectedStreamConnectionId, setSelectedStreamConnectionId] = useState("");
   const [streamFocus, setStreamFocus] = useState<"groups" | null>(null);
@@ -74,6 +75,23 @@ export function App() {
     const timeout = window.setTimeout(() => setToast(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    const syncAlertDeepLink = () => {
+      const target = readAlertDeepLink();
+      setFocusedAlertIncidentId(target.incidentId);
+      setPage(target.page);
+    };
+    window.addEventListener("popstate", syncAlertDeepLink);
+    return () => window.removeEventListener("popstate", syncAlertDeepLink);
+  }, []);
+
+  const closeFocusedAlertIncident = () => {
+    setFocusedAlertIncidentId("");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("incident");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   const login = async (nextUsername: string, password: string) => {
     setLoginBusy(true);
@@ -134,7 +152,7 @@ export function App() {
   if (passwordChangeRequired) {
     return <PasswordChangeView username={username} onChanged={() => {
       setPasswordChangeRequired(false);
-      setPage("settings");
+      setPage(focusedAlertIncidentId ? "alerts" : "settings");
     }} />;
   }
 
@@ -151,6 +169,13 @@ export function App() {
           if (nextPage !== "streams") {
             setStreamFocus(null);
             setStreamFocusGroup("");
+          }
+          if (nextPage !== "alerts") {
+            if (focusedAlertIncidentId) setFocusedAlertIncidentId("");
+            const url = new URL(window.location.href);
+            url.searchParams.delete("incident");
+            if (url.searchParams.get("page") === "alerts") url.searchParams.delete("page");
+            window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
           }
           setPage(nextPage);
         }}
@@ -184,7 +209,7 @@ export function App() {
           }}
           onToast={setToast}
         /> : null}
-        {page === "alerts" ? <AlertsView canWrite={hasPermission(permissions, "alerts:write")} onToast={setToast} /> : null}
+        {page === "alerts" ? <AlertsView canWrite={hasPermission(permissions, "alerts:write")} focusedIncidentId={focusedAlertIncidentId} onCloseFocusedIncident={closeFocusedAlertIncident} onToast={setToast} /> : null}
         {page === "connections" ? <ConnectionsView canReadSettings={hasPermission(permissions, "settings:read")} canWriteSettings={hasPermission(permissions, "settings:write")} onToast={setToast} /> : null}
         {page === "access" && role === "admin" ? <AccessControlView onToast={setToast} /> : null}
         {page === "settings" ? <SettingsView username={username} canReadSettings={hasPermission(permissions, "settings:read")} canWriteSettings={hasPermission(permissions, "settings:write")} onUsernameChanged={setUsername} onToast={setToast} /> : null}
@@ -210,4 +235,13 @@ function permissionsForRole(role: "viewer" | "operator" | "admin" | undefined) {
   if (role === "admin") return ["*"];
   const shared = ["profile:write", "connections:read", "streams:read", "groups:read", "alerts:read"];
   return role === "operator" ? [...shared, "streams:write", "groups:manage"] : shared;
+}
+
+function readAlertDeepLink(): { page: Page; incidentId: string } {
+  const params = new URLSearchParams(window.location.search);
+  const incidentId = params.get("incident")?.trim() ?? "";
+  return {
+    page: params.get("page") === "alerts" || incidentId ? "alerts" : "streams",
+    incidentId,
+  };
 }

@@ -1,4 +1,4 @@
-import type { AlertEscalationPolicy, AlertEscalationPolicyInput, AlertIncident, AlertMetricDefinition, AlertRule, AlertRuleInput, AlertSummary, AlertSuppression, AlertSuppressionInput, AlertWebhookDelivery, AlertWebhookRoute, AlertWebhookRouteInput, ApiSession, CapacityForecast, ConsumerGroup, ConsumerGroupMetricSeries, ConsumerGroupMetricSnapshot, ConsumerHistoryResponse, ConsumerInfo, DashboardDefinition, LifecycleMetrics, LifecycleRequest, MessageDelivery, MonitoringEvent, OperationalSnapshot, OverviewStreamItem, PendingEntry, QuarantineInput, QuarantinePlan, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, RedisConnection, RedisConnectionConfig, RedisEntry, RetentionPolicy, SavedDashboard, StreamItem, StreamMetricSeries, StreamSchemaAnalysis, TelemetryToken, TopologyModel, TraceSpan, TraceSummary } from "./types";
+import type { AlertEscalationPolicy, AlertEscalationPolicyInput, AlertIncident, AlertMetricDefinition, AlertRule, AlertRuleInput, AlertSummary, AlertSuppression, AlertSuppressionInput, AlertWebhookDelivery, AlertWebhookRoute, AlertWebhookRouteInput, ApiSession, CapacityForecast, ConsumerGroup, ConsumerGroupMetricSeries, ConsumerGroupMetricSnapshot, ConsumerHistoryResponse, ConsumerInfo, DashboardDefinition, LifecycleMetrics, LifecycleRequest, MessageDelivery, MonitoringEvent, OperationalSnapshot, OverviewStreamItem, PendingEntry, QuarantineInput, QuarantinePlan, QuarantineRecord, RecoveryPlan, RecoveryPlanInput, RedisConnection, RedisConnectionConfig, RedisEntry, RetentionPolicy, SavedDashboard, StreamComparisonMetricSeries, StreamItem, StreamMetricSeries, StreamSchemaAnalysis, TelemetryToken, TopologyModel, TraceSpan, TraceSummary } from "./types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -54,6 +54,11 @@ export const api = {
     request<StreamMetricSeries>(
       `/api/metrics/timeseries?connectionId=${encodeURIComponent(connectionId)}&range=${encodeURIComponent(range)}${streamKey ? `&streamKey=${encodeURIComponent(streamKey)}` : ""}`,
     ),
+  streamComparisonMetrics: (connectionId: string, range: StreamMetricSeries["range"], streamKeys: string[]) => {
+    const query = new URLSearchParams({ connectionId, range });
+    streamKeys.forEach((streamKey) => query.append("streamKey", streamKey));
+    return request<StreamComparisonMetricSeries>(`/api/metrics/streams?${query.toString()}`);
+  },
   consumerGroupMetrics: (connectionId: string, streamKey: string, range: StreamMetricSeries["range"]) =>
     request<ConsumerGroupMetricSeries>(
       `/api/metrics/consumer-groups?connectionId=${encodeURIComponent(connectionId)}&streamKey=${encodeURIComponent(streamKey)}&range=${encodeURIComponent(range)}`,
@@ -131,8 +136,9 @@ export const api = {
   updateAlertRule: (id: string, input: Partial<AlertRuleInput>) => request<{ item: AlertRule }>(`/api/alert-rules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteAlertRule: (id: string) => request<void>(`/api/alert-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
   alertIncidents: (status = "", limit = 100) => request<{ items: AlertIncident[]; summary: AlertSummary }>(`/api/alert-incidents?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ""}`),
+  alertIncident: (id: string) => request<{ item: AlertIncident }>(`/api/alert-incidents/${encodeURIComponent(id)}`),
   acknowledgeAlertIncident: (id: string) => request<{ item: AlertIncident }>(`/api/alert-incidents/${encodeURIComponent(id)}/ack`, { method: "POST", body: "{}" }),
-  testAlertWebhook: (url: string) => request<{ status: string; statusCode: number }>("/api/alert-webhooks/test", { method: "POST", body: JSON.stringify({ url }) }),
+  testAlertWebhook: (url: string, format: "webhook" | "slack" = "webhook") => request<{ status: string; statusCode: number }>("/api/alert-webhooks/test", { method: "POST", body: JSON.stringify({ url, format }) }),
   alertWebhookDeliveries: (incidentId = "", limit = 100) => request<{ items: AlertWebhookDelivery[] }>(`/api/alert-webhook-deliveries?limit=${limit}${incidentId ? `&incidentId=${encodeURIComponent(incidentId)}` : ""}`),
   alertSilences: () => request<{ items: AlertSuppression[] }>("/api/alert-silences"),
   createAlertSilence: (input: AlertSuppressionInput) => request<{ item: AlertSuppression }>("/api/alert-silences", { method: "POST", body: JSON.stringify(input) }),

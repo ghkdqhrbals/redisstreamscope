@@ -11,6 +11,7 @@ import type {
   RecoveryPlanInput,
   ToastState,
 } from "../types";
+import { Select } from "./Select";
 
 type Props = {
   connectionId: string;
@@ -261,10 +262,27 @@ export function MessageDeliveryPanel({ connectionId, streamKey, entryId, initial
         <button type="button" onClick={() => void preparePendingAction("ack", selectedGroup)} disabled={busy || !canManageGroups}><Check size={16} />{t("Preview acknowledge")}</button>
         <label>
           <span>{t("Retry consumer")}</span>
-          <select value={retryConsumers[selectedGroup.group] ?? ""} onChange={(event) => { actionSequence.current += 1; setRetryConsumers((current) => ({ ...current, [selectedGroup.group]: event.target.value })); setPreview(null); setBusy(false); }}>
-            {!targetConsumers.length ? <option value="">{t("No active consumers")}</option> : null}
-            {targetConsumers.map((consumer) => <option key={consumer} value={consumer}>{consumer}</option>)}
-          </select>
+          <Select
+            className="select-control--block"
+            value={retryConsumers[selectedGroup.group] ?? ""}
+            onChange={(consumer) => {
+              actionSequence.current += 1;
+              setRetryConsumers((current) => ({ ...current, [selectedGroup.group]: consumer }));
+              setPreview(null);
+              setBusy(false);
+            }}
+            options={targetConsumers.map((consumer) => ({
+              value: consumer,
+              label: consumer,
+              description: t("Target consumer"),
+              meta: consumer === selectedGroup.consumer ? t("Owner") : undefined,
+              keywords: `${consumer} ${consumer === selectedGroup.consumer ? t("Owner") : ""}`,
+            }))}
+            ariaLabel={t("Retry consumer")}
+            placeholder={t("No active consumers")}
+            searchable
+            searchPlaceholder={t("Search consumer…")}
+          />
           {selectedGroup.consumersTruncated ? <small>{t("Showing {count} of {total} consumers.", { count: selectedGroup.availableConsumers.length, total: selectedGroup.consumerCount ?? selectedGroup.availableConsumers.length })}</small> : null}
         </label>
         <button type="button" onClick={() => void preparePendingAction("retry", selectedGroup)} disabled={busy || !canManageGroups || !retryConsumers[selectedGroup.group]}><RotateCcw size={16} />{t("Preview NACK / retry")}</button>

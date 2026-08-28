@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, Gauge, HardDrive, ListChecks, RefreshCw, UsersRound } from "lucide-react";
+import { Activity, Clock3, Database, Gauge, HardDrive, ListChecks, RefreshCw, UsersRound } from "lucide-react";
 import { api } from "../api";
 import { ConsumerGroupMetricsPanel } from "../components/ConsumerGroupMetricsPanel";
 import { OperationalHealthPanel } from "../components/OperationalHealthPanel";
 import { OperationalIntelligencePanel } from "../components/OperationalIntelligencePanel";
 import { RequestLifecyclePanel } from "../components/RequestLifecyclePanel";
 import { SavedDashboardsPanel } from "../components/SavedDashboardsPanel";
+import { Select } from "../components/Select";
 import { StreamMetricsPanel } from "../components/StreamMetricsPanel";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
 import { useI18n } from "../i18n";
-import type { ConsumerGroupMetricSnapshot, OverviewStreamItem, RedisConnection, ToastState } from "../types";
+import type { OverviewStreamItem, RedisConnection, ToastState } from "../types";
 
 type OverviewStream = OverviewStreamItem & {
   connectionId: string;
@@ -24,30 +25,10 @@ type OverviewViewProps = {
   onToast: (toast: ToastState) => void;
 };
 
-type OverviewConsumerGroupSnapshot = ConsumerGroupMetricSnapshot & {
-  connectionId: string;
-  connectionName: string;
-};
-
-type AttentionItem = {
-  id: string;
-  connectionId: string;
-  connectionName: string;
-  streamKey: string;
-  groupName: string;
-  consumerCount: number | null;
-  pending: number;
-  lag: number | null;
-  observedDeliveryAgeMs: number | null;
-  lastActivityAt: string | null;
-  unavailable: boolean;
-};
-
 export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onToast }: OverviewViewProps) {
   const { locale, t } = useI18n();
   const [connections, setConnections] = useState<RedisConnection[]>([]);
   const [streams, setStreams] = useState<OverviewStream[]>([]);
-  const [groupSnapshots, setGroupSnapshots] = useState<OverviewConsumerGroupSnapshot[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [metricConnectionId, setMetricConnectionId] = useState("");
@@ -59,26 +40,21 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
     try {
       const connectionResponse = await api.connections();
       setConnections(connectionResponse.items);
-      const [results, snapshotResults] = await Promise.all([
-        Promise.allSettled(connectionResponse.items.map(async (connection) => {
-          const response = await api.overview(connection.id);
-          return response.items.map((stream) => ({
-            ...stream,
-            connectionId: connection.id,
-            connectionName: connection.name,
-          }));
-        })),
-        loadLatestGroupSnapshots(connectionResponse.items),
-      ]);
+      const results = await Promise.allSettled(connectionResponse.items.map(async (connection) => {
+        const response = await api.overview(connection.id);
+        return response.items.map((stream) => ({
+          ...stream,
+          connectionId: connection.id,
+          connectionName: connection.name,
+        }));
+      }));
       setStreams(results.flatMap((result) => result.status === "fulfilled" ? result.value : []));
-      setGroupSnapshots(snapshotResults.items);
-      if (results.some((result) => result.status === "rejected") || snapshotResults.failed) {
+      if (results.some((result) => result.status === "rejected")) {
         setError(t("Some Redis connections could not be summarized."));
       }
     } catch (cause) {
       setConnections([]);
       setStreams([]);
-      setGroupSnapshots([]);
       setError(cause instanceof Error ? t(cause.message) : t("Unable to load Redis status."));
     } finally {
       setLoading(false);
@@ -86,15 +62,6 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
   }, [t]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (!connections.length) return;
-    const timer = window.setInterval(() => {
-      void loadLatestGroupSnapshots(connections).then((result) => {
-        if (!result.failed) setGroupSnapshots(result.items);
-      });
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [connections]);
   useEffect(() => {
     if (!connections.length) {
       setMetricConnectionId("");
@@ -109,6 +76,21 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
     () => streams.filter((stream) => stream.connectionId === metricConnectionId && stream.monitored && stream.available),
     [metricConnectionId, streams],
   );
+  const metricConnectionOptions = useMemo(() => connections.map((connection) => ({
+    value: connection.id,
+    label: connection.name,
+    description: connection.id,
+    meta: connection.mode,
+    keywords: `${connection.id} ${connection.mode} ${connection.username}`,
+    tone: connection.healthy ? "success" as const : "danger" as const,
+  })), [connections]);
+  const metricStreamOptions = useMemo(() => monitoredStreams.map((stream) => ({
+    value: stream.key,
+    label: stream.key,
+    description: stream.connectionName,
+    meta: t("{count} entries", { count: stream.length.toLocaleString(locale) }),
+    keywords: `${stream.key} ${stream.connectionName}`,
+  })), [locale, monitoredStreams, t]);
 
   useEffect(() => {
     if (!monitoredStreams.some((stream) => stream.key === metricStreamKey)) setMetricStreamKey(monitoredStreams[0]?.key ?? "");
@@ -153,18 +135,6 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
     { id: "last-consumed", label: t("Last consumed"), defaultWidth: 200, minWidth: 150 },
     { id: "connection", label: t("Connection"), defaultWidth: 170, minWidth: 120 },
   ], [t]);
-  const attentionColumns = useMemo<ResizableGridColumn[]>(() => [
-    { id: "stream", label: t("Stream key"), defaultWidth: 190, minWidth: 150, grow: true },
-    { id: "group", label: t("Consumer group"), defaultWidth: 170, minWidth: 130, grow: true },
-    { id: "lag", label: t("Lag"), defaultWidth: 72, minWidth: 64 },
-    { id: "pending", label: t("Pending"), defaultWidth: 78, minWidth: 68 },
-    { id: "delay", label: t("Observed delivery age"), defaultWidth: 145, minWidth: 115 },
-    { id: "activity", label: t("Last activity"), defaultWidth: 145, minWidth: 120 },
-    { id: "action", label: null, ariaLabel: t("Actions"), defaultWidth: 70, minWidth: 64 },
-  ], [t]);
-  const attentionItems = useMemo(() => buildAttentionItems(streams, groupSnapshots), [groupSnapshots, streams]);
-  const visibleAttentionItems = attentionItems.slice(0, 8);
-
   return (
     <div className="overview-page">
       <div className="page-header overview-header">
@@ -181,25 +151,6 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
         <div><span><ListChecks size={15} />{t("Pending")}</span><strong>{totals.pending.toLocaleString(locale)}</strong></div>
         <div className="overview-last-consumed-card"><span><Clock3 size={15} />{t("Last consumed")}</span><strong className="mono overview-last-consumed">{totals.lastConsumed || "—"}</strong></div>
       </div>
-      <section className="metric-history-panel overview-attention-panel">
-        <header className="metric-history-header">
-          <div>
-            <h2><AlertTriangle size={16} />{t("Needs attention")}</h2>
-            {attentionItems.length ? <span>{t("{count} affected consumer groups or streams", { count: attentionItems.length })}</span> : null}
-          </div>
-        </header>
-        {visibleAttentionItems.length ? <ResizableGrid className="overview-stream-table overview-attention-table" storageKey="overview-attention-v2" columns={attentionColumns} headerClassName="overview-stream-head">
-          {visibleAttentionItems.map((item) => <div className={`overview-stream-row overview-attention-row attention-${attentionKind(item)}`} key={item.id}>
-            <strong className="mono overview-stream-key" data-label={t("Stream")} title={`${item.connectionName} / ${item.streamKey}`}>{item.streamKey}{connections.length > 1 ? <em>{item.connectionName}</em> : null}</strong>
-            <span className="mono" data-label={t("Consumer group")} title={item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}>{item.unavailable ? t("Unavailable") : item.groupName || t("All consumer groups")}</span>
-            <span data-label={t("Lag")}>{item.lag === null ? "—" : item.lag.toLocaleString(locale)}</span>
-            <span data-label={t("Pending")}>{item.pending.toLocaleString(locale)}</span>
-            <span data-label={t("Observed delivery age")}>{formatMilliseconds(item.observedDeliveryAgeMs)}</span>
-            <span data-label={t("Last activity")}>{formatActivity(item.lastActivityAt, locale)}</span>
-            <span className="overview-card-action"><button type="button" className="overview-group-link" onClick={() => onOpenGroups({ connectionId: item.connectionId, key: item.streamKey, groupName: item.groupName || undefined })}>{t("Open")}</button></span>
-          </div>)}
-        </ResizableGrid> : <div className="consumer-group-metrics-empty"><CheckCircle2 size={19} /><span>{t("No active lag or pending work")}</span></div>}
-      </section>
       <OperationalHealthPanel connectionId={metricConnectionId} />
       <OperationalIntelligencePanel connectionId={metricConnectionId} streamKey={metricStreamKey} canWrite={canWrite} onToast={onToast} />
       <SavedDashboardsPanel currentUserId={currentUserId} role={role} targets={streams.filter((stream) => stream.monitored && stream.available).map((stream) => ({ connectionId: stream.connectionId, streamKey: stream.key, connectionName: stream.connectionName }))} onToast={onToast} />
@@ -209,13 +160,26 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
         streamKey={metricStreamKey}
         monitored={monitoredStreams.some((stream) => stream.key === metricStreamKey)}
         leadingControls={<>
-          {connections.length > 1 ? <select value={metricConnectionId} onChange={(event) => setMetricConnectionId(event.target.value)} aria-label={t("Metric connection")}>
-            {connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
-          </select> : null}
-          <select value={metricStreamKey} onChange={(event) => setMetricStreamKey(event.target.value)} aria-label={t("Metric stream")} disabled={!monitoredStreams.length}>
-            {!monitoredStreams.length ? <option value="">{t("No monitored streams")}</option> : null}
-            {monitoredStreams.map((stream) => <option key={stream.key} value={stream.key}>{stream.key}</option>)}
-          </select>
+          {connections.length > 1 ? <Select
+            value={metricConnectionId}
+            options={metricConnectionOptions}
+            onChange={setMetricConnectionId}
+            ariaLabel={t("Metric connection")}
+            prefix={t("Connection")}
+            searchable
+            size="compact"
+          /> : null}
+          <Select
+            value={metricStreamKey}
+            options={metricStreamOptions}
+            onChange={setMetricStreamKey}
+            ariaLabel={t("Metric stream")}
+            prefix={t("Stream")}
+            placeholder={t("No monitored streams")}
+            disabled={!monitoredStreams.length}
+            searchable
+            size="compact"
+          />
         </>}
       />
       <RequestLifecyclePanel connectionId={metricConnectionId} streamKey={metricStreamKey} />
@@ -270,102 +234,6 @@ export function OverviewView({ onOpenGroups, currentUserId, role, canWrite, onTo
   );
 }
 
-async function loadLatestGroupSnapshots(connections: RedisConnection[]) {
-  const results = await Promise.allSettled(connections.map(async (connection) => {
-    const response = await api.latestConsumerGroupMetrics(connection.id);
-    return response.items.map((item) => ({
-      ...item,
-      connectionId: connection.id,
-      connectionName: connection.name,
-    }));
-  }));
-  return {
-    items: results.flatMap((result) => result.status === "fulfilled" ? result.value : []),
-    failed: results.some((result) => result.status === "rejected"),
-  };
-}
-
-function buildAttentionItems(streams: OverviewStream[], snapshots: OverviewConsumerGroupSnapshot[]) {
-  const streamByID = new Map(streams.map((stream) => [`${stream.connectionId}\u0000${stream.key}`, stream]));
-  const coveredStreams = new Set<string>();
-  const items: AttentionItem[] = [];
-  for (const snapshot of snapshots) {
-    const streamID = `${snapshot.connectionId}\u0000${snapshot.streamKey}`;
-    const stream = streamByID.get(streamID);
-    if (!stream?.available || !((snapshot.lag ?? 0) > 0 || snapshot.pending > 0)) continue;
-    coveredStreams.add(streamID);
-    items.push({
-      id: `${streamID}\u0000${snapshot.groupName}`,
-      connectionId: snapshot.connectionId,
-      connectionName: snapshot.connectionName,
-      streamKey: snapshot.streamKey,
-      groupName: snapshot.groupName,
-      consumerCount: snapshot.consumerCount,
-      pending: snapshot.pending,
-      lag: snapshot.lag,
-      observedDeliveryAgeMs: snapshot.observedDeliveryAgeMs,
-      lastActivityAt: snapshot.lastActivityAt,
-      unavailable: false,
-    });
-  }
-  for (const stream of streams) {
-    const streamID = `${stream.connectionId}\u0000${stream.key}`;
-    const unavailable = stream.monitored && !stream.available;
-    const hasBacklog = stream.pending > 0 || (stream.lagKnown && stream.totalLag > 0);
-    if ((!unavailable && !hasBacklog) || coveredStreams.has(streamID)) continue;
-    items.push({
-      id: `${streamID}\u0000*`,
-      connectionId: stream.connectionId,
-      connectionName: stream.connectionName,
-      streamKey: stream.key,
-      groupName: "",
-      consumerCount: null,
-      pending: stream.pending,
-      lag: stream.lagKnown ? stream.totalLag : null,
-      observedDeliveryAgeMs: null,
-      lastActivityAt: null,
-      unavailable,
-    });
-  }
-  return items.sort((left, right) => {
-    const severityDifference = attentionSeverity(right) - attentionSeverity(left);
-    if (severityDifference) return severityDifference;
-    if (left.pending !== right.pending) return right.pending - left.pending;
-    if ((left.lag ?? -1) !== (right.lag ?? -1)) return (right.lag ?? -1) - (left.lag ?? -1);
-    if ((left.observedDeliveryAgeMs ?? -1) !== (right.observedDeliveryAgeMs ?? -1)) return (right.observedDeliveryAgeMs ?? -1) - (left.observedDeliveryAgeMs ?? -1);
-    return left.streamKey.localeCompare(right.streamKey) || left.groupName.localeCompare(right.groupName);
-  });
-}
-
-function attentionSeverity(item: AttentionItem) {
-  if (item.unavailable) return 4;
-  if (item.consumerCount === 0 && (item.lag ?? 0) > 0) return 3;
-  if (item.pending > 0) return 2;
-  if ((item.lag ?? 0) > 0) return 1;
-  return 0;
-}
-
-function attentionKind(item: AttentionItem) {
-  if (item.unavailable) return "unavailable";
-  if (item.consumerCount === 0 && (item.lag ?? 0) > 0) return "blocked";
-  if (item.pending > 0) return "pending";
-  return "lagging";
-}
-
-function formatMilliseconds(value: number | null) {
-  if (value === null) return "—";
-  if (value < 1) return `${value.toFixed(2)} ms`;
-  if (value < 1000) return `${value.toFixed(value < 10 ? 1 : 0)} ms`;
-  if (value < 60000) return `${(value / 1000).toFixed(1)} s`;
-  return `${(value / 60000).toFixed(1)} min`;
-}
-
-function formatActivity(value: string | null, locale: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(locale, { dateStyle: "short", timeStyle: "medium", hour12: false });
-}
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
 

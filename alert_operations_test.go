@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -151,6 +152,171 @@ func TestAlertWebhookRouteSecretsAreRedactedAndDestinationCanBePreservedOnUpdate
 	}
 }
 
+func TestAlertWebhookFormatsDefaultAndPersistForRulesAndRoutes(t *testing.T) {
+	dataStore := openAlertOperationsTestStore(t)
+	ctx := context.Background()
+	enabled := true
+	defaultRule, err := dataStore.createAlertRule(ctx, alertRuleInput{
+		Name: "default webhook", Metric: alertMetricConsumerGroupLag, Operator: ">", Threshold: 10,
+		Severity: "warning", Enabled: &enabled,
+	}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultRule.WebhookFormat != alertWebhookFormatWebhook {
+		t.Fatalf("default rule format=%q", defaultRule.WebhookFormat)
+	}
+	slackRule, err := dataStore.createAlertRule(ctx, alertRuleInput{
+		Name: "Slack webhook", Metric: alertMetricConsumerGroupLag, Operator: ">", Threshold: 10,
+		Severity: "critical", Enabled: &enabled, WebhookURL: "https://8.8.8.8/slack",
+		WebhookFormat: alertWebhookFormatSlack,
+	}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedRule, err := dataStore.getAlertRule(ctx, slackRule.ID)
+	if err != nil || loadedRule.WebhookFormat != alertWebhookFormatSlack {
+		t.Fatalf("persisted rule=%+v err=%v", loadedRule, err)
+	}
+
+	route, err := dataStore.createAlertWebhookRoute(ctx, alertWebhookRouteInput{
+		Name: "mixed delivery formats",
+		Destinations: []alertRouteDestinationInput{
+			{Name: "generic", WebhookURL: "https://8.8.8.8/generic", Enabled: &enabled},
+			{Name: "slack", WebhookURL: "https://8.8.4.4/slack", Format: alertWebhookFormatSlack, Enabled: &enabled},
+		}, Enabled: &enabled,
+	}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	formats := map[string]string{}
+	for _, destination := range route.Destinations {
+		formats[destination.Name] = destination.Format
+	}
+	if formats["generic"] != alertWebhookFormatWebhook || formats["slack"] != alertWebhookFormatSlack {
+		t.Fatalf("created destination formats=%v", formats)
+	}
+	var slackDestination alertRouteDestination
+	for _, destination := range route.Destinations {
+		if destination.Name == "slack" {
+			slackDestination = destination
+		}
+	}
+	updated, err := dataStore.updateAlertWebhookRoute(ctx, route.ID, alertWebhookRouteInput{
+		Name: route.Name, Enabled: &enabled,
+		Destinations: []alertRouteDestinationInput{{
+			ID: slackDestination.ID, Name: slackDestination.Name, Enabled: &enabled,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Destinations) != 1 || updated.Destinations[0].Format != alertWebhookFormatSlack || updated.Destinations[0].WebhookURL == "" {
+		t.Fatalf("blank route update did not preserve Slack destination: %+v", updated.Destinations)
+	}
+	redacted, err := dataStore.getAlertWebhookRoute(ctx, route.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redacted.Destinations[0].Format != alertWebhookFormatSlack || redacted.Destinations[0].WebhookURL != "" || !redacted.Destinations[0].WebhookConfigured {
+		t.Fatalf("redacted Slack destination lost format or leaked URL: %+v", redacted.Destinations[0])
+	}
+	if _, err := dataStore.createAlertWebhookRoute(ctx, alertWebhookRouteInput{
+		Name: "invalid format", Destinations: []alertRouteDestinationInput{{Name: "bad", WebhookURL: "https://8.8.8.8/bad", Format: "teams"}},
+	}, "admin"); err == nil || !strings.Contains(err.Error(), "webhook format") {
+		t.Fatalf("unsupported destination format err=%v", err)
+	}
+}
+
+func TestAlertNotificationJobPersistsDestinationFormat(t *testing.T) {
+	dataStore := openAlertOperationsTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 13, 10, 0, 0, time.UTC)
+	notification := alertNotification{
+		Event: "firing", SentAt: now, DestinationURL: "https://8.8.8.8/slack",
+		DestinationFormat: alertWebhookFormatSlack, DeliveryGroupID: "group-format", DedupKey: "dedup-format",
+		Rule:     alertRule{ID: "rule-format", Name: "lag", Metric: alertMetricConsumerGroupLag, Severity: "critical"},
+		Incident: alertIncident{ID: "incident-format", RuleID: "rule-format", Status: alertIncidentFiring, StartedAt: now},
+	}
+	reserved, inserted, err := dataStore.reserveAlertNotificationJob(ctx, notification, now)
+	if err != nil || !inserted {
+		t.Fatalf("reserve inserted=%v err=%v", inserted, err)
+	}
+	due, err := dataStore.dueAlertNotificationJobs(ctx, now, 10)
+	if err != nil || len(due) != 1 || due[0].DestinationFormat != alertWebhookFormatSlack {
+		t.Fatalf("due notifications=%+v err=%v", due, err)
+	}
+	job, claimed, err := dataStore.claimAlertNotificationJob(ctx, reserved.JobID, now)
+	if err != nil || !claimed || job.Notification.DestinationFormat != alertWebhookFormatSlack {
+		t.Fatalf("claimed job=%+v claimed=%v err=%v", job, claimed, err)
+	}
+	defaultNotification := notification
+	defaultNotification.Incident.ID = "incident-default-format"
+	defaultNotification.DeliveryGroupID = "group-default-format"
+	defaultNotification.DedupKey = "dedup-default-format"
+	defaultNotification.DestinationFormat = ""
+	defaultNotification.Rule.WebhookFormat = ""
+	reservedDefault, inserted, err := dataStore.reserveAlertNotificationJob(ctx, defaultNotification, now)
+	if err != nil || !inserted || reservedDefault.DestinationFormat != alertWebhookFormatWebhook {
+		t.Fatalf("default format reservation=%+v inserted=%v err=%v", reservedDefault, inserted, err)
+	}
+}
+
+func TestAlertWebhookFormatMigrationDefaultsLegacyRows(t *testing.T) {
+	dataPath := filepath.Join(t.TempDir(), "legacy-alerts.db")
+	legacy, err := sql.Open("sqlite", dataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`CREATE TABLE alert_rules (
+			id TEXT PRIMARY KEY,name TEXT NOT NULL,metric TEXT NOT NULL,operator TEXT NOT NULL,threshold REAL NOT NULL,
+			connection_id TEXT NOT NULL DEFAULT '',stream_key TEXT NOT NULL DEFAULT '',group_name TEXT NOT NULL DEFAULT '',
+			for_seconds INTEGER NOT NULL DEFAULT 0,cooldown_seconds INTEGER NOT NULL DEFAULT 300,severity TEXT NOT NULL DEFAULT 'warning',
+			enabled INTEGER NOT NULL DEFAULT 1,webhook_url TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT
+		)`,
+		`CREATE TABLE alert_webhook_routes (
+			id TEXT PRIMARY KEY,name TEXT NOT NULL,severities_json TEXT NOT NULL DEFAULT '[]',metrics_json TEXT NOT NULL DEFAULT '[]',
+			connection_id TEXT NOT NULL DEFAULT '',stream_key TEXT NOT NULL DEFAULT '',group_name TEXT NOT NULL DEFAULT '',labels_json TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT
+		)`,
+		`CREATE TABLE alert_webhook_route_destinations (
+			id TEXT PRIMARY KEY,route_id TEXT NOT NULL REFERENCES alert_webhook_routes(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,webhook_url TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+			UNIQUE(route_id,name)
+		)`,
+		`INSERT INTO alert_rules(id,name,metric,operator,threshold,severity,webhook_url,created_at,updated_at)
+			VALUES('legacy-rule','legacy lag','consumer_group_lag','>',10,'warning','https://8.8.8.8/rule','2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')`,
+		`INSERT INTO alert_webhook_routes(id,name,created_at,updated_at)
+			VALUES('legacy-route','legacy route','2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')`,
+		`INSERT INTO alert_webhook_route_destinations(id,route_id,name,webhook_url,created_at,updated_at)
+			VALUES('legacy-destination','legacy-route','legacy destination','https://8.8.8.8/route','2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')`,
+	}
+	for _, statement := range statements {
+		if _, err := legacy.Exec(statement); err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dataStore, err := openStore(appConfig{DataPath: dataPath, SessionTTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataStore.close()
+	rule, err := dataStore.getAlertRule(context.Background(), "legacy-rule")
+	if err != nil || rule.WebhookFormat != alertWebhookFormatWebhook {
+		t.Fatalf("migrated rule=%+v err=%v", rule, err)
+	}
+	route, err := dataStore.getAlertWebhookRoute(context.Background(), "legacy-route", true)
+	if err != nil || len(route.Destinations) != 1 || route.Destinations[0].Format != alertWebhookFormatWebhook {
+		t.Fatalf("migrated route=%+v err=%v", route, err)
+	}
+}
+
 func TestAlertWebhookRoutingMatchesScopeAndFansOutDestinations(t *testing.T) {
 	dataStore := openAlertOperationsTestStore(t)
 	ctx := context.Background()
@@ -162,7 +328,7 @@ func TestAlertWebhookRoutingMatchesScopeAndFansOutDestinations(t *testing.T) {
 		},
 		Destinations: []alertRouteDestinationInput{
 			{Name: "on-call", WebhookURL: "https://8.8.8.8/on-call"},
-			{Name: "audit", WebhookURL: "https://8.8.4.4/audit"},
+			{Name: "audit", WebhookURL: "https://8.8.4.4/audit", Format: alertWebhookFormatSlack},
 		},
 	}, "admin")
 	if err != nil {
@@ -175,6 +341,13 @@ func TestAlertWebhookRoutingMatchesScopeAndFansOutDestinations(t *testing.T) {
 	targets, err := dataStore.matchingAlertDeliveryTargets(ctx, notification, "")
 	if err != nil || len(targets) != 2 {
 		t.Fatalf("targets=%+v err=%v", targets, err)
+	}
+	formats := map[string]bool{}
+	for _, target := range targets {
+		formats[target.Format] = true
+	}
+	if !formats[alertWebhookFormatWebhook] || !formats[alertWebhookFormatSlack] {
+		t.Fatalf("delivery formats were not propagated to targets: %+v", targets)
 	}
 	targets, err = dataStore.matchingAlertDeliveryTargets(ctx, notification, "warning")
 	if err != nil || len(targets) != 0 {

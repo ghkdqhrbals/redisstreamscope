@@ -177,7 +177,7 @@ func (s *apiServer) requireNonAdminStreamScope(writer http.ResponseWriter, reque
 			return false
 		}
 		if !checker.allows(action, redisStreamScope(connectionID, streamKey)) {
-			writeError(writer, http.StatusForbidden, "permission_denied", "이 작업을 수행할 권한이 없습니다.")
+			writeError(writer, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 			return false
 		}
 	}

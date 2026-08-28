@@ -38,6 +38,7 @@ type propertiesConfig struct {
 	Server  struct {
 		SecureCookies *bool
 		SessionTTL    string
+		PublicURL     string
 	}
 	Redis struct {
 		Connections []connectionConfig
@@ -51,6 +52,7 @@ type appConfig struct {
 	SessionTTL     time.Duration
 	SecureCookies  bool
 	MetricsToken   string
+	PublicURL      string
 	Connections    []connectionConfig
 	MaxPageSize    int64
 	MaxLiveStreams int
@@ -98,7 +100,21 @@ func loadConfig() (appConfig, error) {
 			}
 			cfg.SessionTTL = parsed
 		}
+		cfg.PublicURL = document.Server.PublicURL
 		cfg.Connections = document.Redis.Connections
+	}
+	publicURLEnvironmentConfigured := false
+	if raw, present := lookupTrimmedEnvironment("PUBLIC_URL"); present {
+		cfg.PublicURL = raw
+		publicURLEnvironmentConfigured = true
+	}
+	cfg.PublicURL, err = normalizePublicURL(cfg.PublicURL)
+	if err != nil {
+		source := "server.publicURL"
+		if publicURLEnvironmentConfigured {
+			source = "PUBLIC_URL"
+		}
+		return cfg, fmt.Errorf("invalid %s: %w", source, err)
 	}
 	redisEnvironmentConfigured, err := applyRedisEnvironment(&cfg)
 	if err != nil {
@@ -107,12 +123,39 @@ func loadConfig() (appConfig, error) {
 	if err := validateConnections(cfg.Connections); err != nil {
 		return cfg, err
 	}
-	if redisEnvironmentConfigured {
+	if redisEnvironmentConfigured || publicURLEnvironmentConfigured {
 		if err := savePropertiesConfig(cfg.ConfigPath, cfg); err != nil {
-			return cfg, fmt.Errorf("persist Redis environment configuration: %w", err)
+			return cfg, fmt.Errorf("persist environment configuration: %w", err)
 		}
 	}
 	return cfg, nil
+}
+
+func normalizePublicURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if len(raw) > 2048 {
+		return "", errors.New("must be 2048 characters or fewer")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" || parsed.Opaque != "" {
+		return "", errors.New("must be an absolute HTTP or HTTPS URL")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("must use http or https")
+	}
+	if parsed.User != nil {
+		return "", errors.New("must not include credentials")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("must not include a query or fragment")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func serverPort() (string, error) {
@@ -326,6 +369,7 @@ func readPropertiesConfig(path string) (propertiesConfig, bool, error) {
 		document.Server.SecureCookies = &parsed
 	}
 	document.Server.SessionTTL = values["server.sessionTTL"]
+	document.Server.PublicURL = values["server.publicURL"]
 	count := 0
 	if raw, present := values["redis.connections"]; present {
 		count, err = strconv.Atoi(raw)
@@ -399,6 +443,7 @@ func renderProperties(cfg appConfig, maskPasswords bool) string {
 	builder.WriteString("version=1\n")
 	writeProperty(&builder, "server.secureCookies", strconv.FormatBool(cfg.SecureCookies))
 	writeProperty(&builder, "server.sessionTTL", cfg.SessionTTL.String())
+	writeProperty(&builder, "server.publicURL", cfg.PublicURL)
 	writeProperty(&builder, "redis.connections", strconv.Itoa(len(cfg.Connections)))
 	for index, connection := range cfg.Connections {
 		prefix := fmt.Sprintf("redis.%d.", index)

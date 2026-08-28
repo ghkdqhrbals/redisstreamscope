@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { ArrowRight, Eye, EyeOff, Layers3, LockKeyhole, Server } from "lucide-react";
-import { LanguageSelect, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
 type LoginViewProps = {
   busy: boolean;
@@ -45,7 +45,6 @@ export function LoginView({ busy, error, onLogin }: LoginViewProps) {
       </section>
 
       <section className="login-panel">
-        <LanguageSelect className="login-language" />
         <div className="login-card">
           <div className="mobile-login-brand">
             <span className="brand-mark"><Layers3 size={18} /></span>

@@ -40,6 +40,22 @@ export type StreamMetricSeries = {
   items: StreamMetricPoint[];
 };
 
+export type StreamComparisonMetricValue = Omit<StreamMetricPoint, "timestamp">;
+
+export type StreamComparisonMetricPoint = {
+  timestamp: string;
+  values: Record<string, StreamComparisonMetricValue>;
+};
+
+export type StreamComparisonMetricSeries = {
+  connectionId: string;
+  range: StreamMetricSeries["range"];
+  intervalSeconds: number;
+  generatedAt: string;
+  streams: string[];
+  items: StreamComparisonMetricPoint[];
+};
+
 export type ConsumerGroupMetricValue = {
   consumerCount: number;
   pending: number;
@@ -542,6 +558,8 @@ export type AlertMetricDefinition = {
   suggestedValue: number;
 };
 
+export type AlertWebhookFormat = "webhook" | "slack";
+
 export type AlertRule = {
   id: string;
   name: string;
@@ -556,6 +574,7 @@ export type AlertRule = {
   severity: "info" | "warning" | "critical";
   enabled: boolean;
   webhookConfigured: boolean;
+  webhookFormat: AlertWebhookFormat;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -581,6 +600,7 @@ export type AlertRuleInput = {
   severity: "info" | "warning" | "critical";
   enabled: boolean;
   webhookUrl?: string;
+  webhookFormat?: AlertWebhookFormat;
 };
 
 export type AlertIncident = {
@@ -656,6 +676,7 @@ export type AlertSuppressionInput = Omit<AlertSuppression, "id" | "createdBy" | 
 export type AlertRouteDestination = {
   id: string;
   name: string;
+  format: AlertWebhookFormat;
   webhookConfigured: boolean;
   enabled: boolean;
   createdAt: string;
@@ -678,7 +699,7 @@ export type AlertWebhookRoute = {
 export type AlertWebhookRouteInput = {
   name: string;
   selector: AlertSelector;
-  destinations: Array<{ id?: string; name: string; webhookUrl?: string; enabled: boolean }>;
+  destinations: Array<{ id?: string; name: string; format: AlertWebhookFormat; webhookUrl?: string; enabled: boolean }>;
   enabled: boolean;
 };
 

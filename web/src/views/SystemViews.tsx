@@ -1,10 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Check, ChevronDown, Copy, Database, KeyRound, LockKeyhole, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Server, Settings2, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { Activity, AlertTriangle, Check, ChevronDown, Copy, Database, KeyRound, LockKeyhole, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Server, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { api } from "../api";
 import { PasswordForm } from "../components/PasswordForm";
 import { emptyRedisConnection, RedisConnectionEditor } from "../components/RedisConnectionEditor";
 import { ResizableGrid, type ResizableGridColumn } from "../components/ResizableGrid";
-import { LanguageSelect, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import type { RedisConnection, RedisConnectionConfig, TelemetryToken, ToastState } from "../types";
 
 type ConnectionsViewProps = {
@@ -190,7 +190,7 @@ type SettingsProps = {
 
 export function SettingsView({ username, canReadSettings, canWriteSettings, onUsernameChanged, onToast }: SettingsProps) {
   const { t } = useI18n();
-  const [section, setSection] = useState<"connections" | "telemetry" | "general" | "account">(canReadSettings ? "connections" : "account");
+  const [section, setSection] = useState<"connections" | "telemetry" | "account">(canReadSettings ? "connections" : "account");
   return (
     <div className="system-page">
       <div className="page-header"><div><div className="breadcrumbs">{t("Settings")}</div><h1>{t("Console settings")}</h1></div></div>
@@ -199,14 +199,9 @@ export function SettingsView({ username, canReadSettings, canWriteSettings, onUs
           {canReadSettings ? <button aria-current={section === "connections" ? "page" : undefined} className={section === "connections" ? "active" : ""} onClick={() => setSection("connections")}><Database size={15} />{t("Redis connections")}</button> : null}
           {canReadSettings ? <button aria-current={section === "telemetry" ? "page" : undefined} className={section === "telemetry" ? "active" : ""} onClick={() => setSection("telemetry")}><Activity size={15} />{t("Request telemetry")}</button> : null}
           <button aria-current={section === "account" ? "page" : undefined} className={section === "account" ? "active" : ""} onClick={() => setSection("account")}><KeyRound size={15} />{t("Account")}</button>
-          <button aria-current={section === "general" ? "page" : undefined} className={section === "general" ? "active" : ""} onClick={() => setSection("general")}><Settings2 size={15} />{t("General")}</button>
         </nav>
         {section === "connections" && canReadSettings ? <ConnectionSettings canWrite={canWriteSettings} onToast={onToast} /> : null}
         {section === "telemetry" && canReadSettings ? <TelemetrySettings canWrite={canWriteSettings} onToast={onToast} /> : null}
-        {section === "general" ? <section className="settings-panel">
-          <h2>{t("General")}</h2>
-          <div className="setting-row"><div><strong>{t("Language")}</strong><span>{t("Changes apply immediately and are saved in this browser.")}</span></div><LanguageSelect className="settings-language" /></div>
-        </section> : null}
         {section === "account" ? <section className="settings-panel account-settings">
           <h2>{t("Administrator username")}</h2>
           <UsernameForm username={username} onChanged={onUsernameChanged} onToast={onToast} />

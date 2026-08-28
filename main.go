@@ -70,7 +70,7 @@ func main() {
 	metricsDone := server.startMetricCollection(metricsContext)
 	operationalDone := server.startOperationalCollection(metricsContext)
 	insightsDone := server.startInsightCollection(metricsContext)
-	alertService, _, err := newAlertService(store, alertServiceOptions{})
+	alertService, _, err := newAlertService(store, alertServiceOptions{PublicURL: config.PublicURL})
 	if err != nil {
 		log.Fatalf("configure alert service: %v", err)
 	}

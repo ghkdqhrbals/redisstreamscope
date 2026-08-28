@@ -130,31 +130,6 @@ button {
   gap: 18px;
 }
 
-.language-switcher {
-  display: inline-flex;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface);
-}
-
-.language-switcher button {
-  min-height: 30px;
-  padding: 3px 9px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.language-switcher button[aria-pressed="true"] {
-  background: #111111;
-  color: #ffffff;
-}
-
 main,
 footer {
   width: min(calc(100% - 40px), var(--content-width));

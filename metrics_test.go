@@ -215,6 +215,116 @@ func TestMetricSamplesAggregateAndFilterByStream(t *testing.T) {
 	}
 }
 
+func TestStreamComparisonMetricSeriesKeepsStreamsIsolated(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+
+	ctx := context.Background()
+	from := time.Unix(1_800_000_000, 0).UTC()
+	until := from.Add(10 * time.Second)
+	first := from.Add(1500 * time.Millisecond)
+	second := from.Add(6500 * time.Millisecond)
+	delayOrders := int64(120)
+	delayBilling := int64(480)
+	publishOrders := 4.0
+	publishBilling := 2.0
+	samples := []streamMetricSample{
+		{RecordedAt: first, ConnectionID: "redis", StreamKey: "orders", Entries: 10, ConsumerGroups: 1, ConsumerCount: 2, TotalLag: 3, LagKnown: true, Pending: 1, ConsumeDelayMs: &delayOrders, RedisLatencyMs: 0.8, PublishRate: &publishOrders},
+		{RecordedAt: first, ConnectionID: "redis", StreamKey: "billing", Entries: 40, ConsumerGroups: 2, ConsumerCount: 4, TotalLag: 0, LagKnown: false, Pending: 7, ConsumeDelayMs: &delayBilling, RedisLatencyMs: 0.8, PublishRate: &publishBilling},
+		{RecordedAt: second, ConnectionID: "redis", StreamKey: "orders", Entries: 12, ConsumerGroups: 1, ConsumerCount: 2, TotalLag: 1, LagKnown: true, Pending: 0, ConsumeDelayMs: &delayOrders, RedisLatencyMs: 0.6, PublishRate: &publishOrders},
+	}
+	if err := store.writeMetricSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := store.listStreamComparisonMetricSeries(
+		ctx,
+		"redis",
+		[]string{"orders", "billing"},
+		from,
+		until,
+		3,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("points=%d, want 2: %+v", len(items), items)
+	}
+	_, bucketSeconds := metricBucketSettings(from, until, 3)
+	if bucketSeconds != 5 || items[0].Timestamp.Unix()%bucketSeconds != 0 || items[1].Timestamp.Unix()%bucketSeconds != 0 {
+		t.Fatalf("timestamps are not canonical %ds buckets: %+v", bucketSeconds, items)
+	}
+	orders := items[0].Values["orders"]
+	billing := items[0].Values["billing"]
+	if orders.Entries != 10 || orders.Pending != 1 || orders.TotalLag == nil || *orders.TotalLag != 3 {
+		t.Fatalf("orders metrics were changed or aggregated with another stream: %+v", orders)
+	}
+	if billing.Entries != 40 || billing.Pending != 7 || billing.TotalLag != nil {
+		t.Fatalf("billing identity or unknown lag was not preserved: %+v", billing)
+	}
+	if _, exists := items[1].Values["billing"]; exists {
+		t.Fatalf("missing billing sample must not be synthesized: %+v", items[1])
+	}
+}
+
+func TestStreamComparisonMetricSeriesDoesNotExceedMaximumPoints(t *testing.T) {
+	config := appConfig{DataPath: filepath.Join(t.TempDir(), "redisstreamscope.db"), SessionTTL: time.Hour}
+	store, err := openStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+
+	ctx := context.Background()
+	from := time.Unix(1_800_100_000, 0).UTC()
+	samples := make([]streamMetricSample, 0, 601)
+	for offset := 0; offset <= 600; offset++ {
+		samples = append(samples, streamMetricSample{
+			RecordedAt:   from.Add(time.Duration(offset) * time.Second),
+			ConnectionID: "redis",
+			StreamKey:    "orders",
+			Entries:      int64(offset),
+			LagKnown:     true,
+		})
+	}
+	if err := store.writeMetricSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	until := from.Add(600 * time.Second)
+	items, err := store.listStreamComparisonMetricSeries(ctx, "redis", []string{"orders"}, from, until, metricMaxPoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) > metricMaxPoints {
+		t.Fatalf("points=%d, maximum=%d", len(items), metricMaxPoints)
+	}
+	_, bucketSeconds := metricBucketSettings(from, until, metricMaxPoints)
+	for _, item := range items {
+		if item.Timestamp.Unix()%bucketSeconds != 0 {
+			t.Fatalf("timestamp %s is not aligned to a %ds bucket", item.Timestamp, bucketSeconds)
+		}
+	}
+}
+
+func TestRequestedComparisonStreamKeysDeduplicatesAndLimits(t *testing.T) {
+	keys, err := requestedComparisonStreamKeys([]string{" orders ", "billing", "orders"})
+	if err != nil || len(keys) != 2 || keys[0] != "orders" || keys[1] != "billing" {
+		t.Fatalf("keys=%v err=%v", keys, err)
+	}
+	tooMany := make([]string, metricMaxComparedStreams+1)
+	for index := range tooMany {
+		tooMany[index] = string(rune('a' + index))
+	}
+	if _, err := requestedComparisonStreamKeys(tooMany); err == nil {
+		t.Fatal("expected comparison stream limit error")
+	}
+}
+
 func TestMetricRatesUseOneSecondDeltas(t *testing.T) {
 	recordedAt := time.Date(2026, 7, 30, 2, 0, 1, 0, time.UTC)
 	previous := streamMetricState{
